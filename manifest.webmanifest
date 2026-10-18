@@ -1,0 +1,18 @@
+{
+  "name": "Monsoon Merchant",
+  "short_name": "Monsoon",
+  "description": "Strategic trading across the monsoon seas of Southeast Asia. Plays offline.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B1A2C",
+  "theme_color": "#0B1A2C",
+  "categories": ["games"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
