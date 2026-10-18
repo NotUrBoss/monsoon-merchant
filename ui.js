@@ -1,29 +1,64 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.0.1';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
 
   /* ================= Storage ================= */
   const KEYS = { meta: 'mm.meta.v1', normal: 'mm.run.normal.v1', daily: 'mm.run.daily.v1' };
-  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
-  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
-  function mergeMeta(m) {
-    const b = MM.newMeta();
-    ['settings', 'stats', 'daily'].forEach(sec => { m[sec] = Object.assign({}, b[sec], m[sec] || {}); });
-    Object.keys(b).forEach(k => { if (m[k] === undefined) m[k] = b[k]; });
-    return m;
+  let storageWarning = false;
+  function savingFailed() {
+    if (!storageWarning) toast('Progress could not be saved. Keep this tab open and copy a backup from the menu.', 'bad');
+    storageWarning = true;
   }
-  function loadMeta() { const raw = lsGet(KEYS.meta); if (raw) { try { return mergeMeta(JSON.parse(raw)); } catch (e) { /* fall through */ } } return MM.newMeta(); }
-  function saveMeta() { lsSet(KEYS.meta, JSON.stringify(meta)); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { savingFailed(); return false; } }
+  function lsDel(k) { try { localStorage.removeItem(k); return true; } catch (e) { savingFailed(); return false; } }
+  function loadMeta() { const raw = lsGet(KEYS.meta); if (raw) { try { return MM.deserializeMeta(raw); } catch (e) { /* fall through */ } } return MM.newMeta(); }
+  function saveMeta() { return lsSet(KEYS.meta, JSON.stringify(meta)); }
   function loadSlot(slot) {
     const raw = lsGet(KEYS[slot]); if (!raw) return null;
     try { const s = MM.deserialize(raw); return s.phase === 'ended' ? null : s; } catch (e) { return null; }
   }
-  function saveRun() { if (!run || !UI.slot) return; if (run.phase === 'ended') lsDel(KEYS[UI.slot]); else lsSet(KEYS[UI.slot], MM.serialize(run)); }
+  function saveRun() { if (!run || !UI.slot) return true; return run.phase === 'ended' ? lsDel(KEYS[UI.slot]) : lsSet(KEYS[UI.slot], MM.serialize(run)); }
+
+  function restoreBackup(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid backup');
+    const nextMeta = MM.deserializeMeta(JSON.stringify(data.meta));
+    const values = [[KEYS.meta, JSON.stringify(nextMeta)]];
+    ['normal', 'daily'].forEach(slot => {
+      const raw = data[slot];
+      if (raw !== null && raw !== undefined) {
+        const saved = MM.deserialize(raw);
+        if (saved.mode !== slot) throw new Error('Wrong save slot');
+      }
+      values.push([KEYS[slot], raw == null ? null : raw]);
+    });
+    // Validate every slot before touching storage; keep old values for rollback.
+    let previous;
+    try { previous = values.map(([key]) => [key, localStorage.getItem(key)]); }
+    catch (error) { const failure = new Error('Restore could not access this device’s storage. Your progress was not changed.'); failure.storage = true; throw failure; }
+    let written = 0;
+    try {
+      values.forEach(([key, value]) => {
+        if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
+        written++;
+      });
+    } catch (error) {
+      let rolledBack = true;
+      for (let i = written - 1; i >= 0; i--) {
+        const [key, value] = previous[i];
+        try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
+        catch (rollbackError) { rolledBack = false; }
+      }
+      const failure = new Error(rolledBack ? 'Restore could not be saved. Your previous progress is unchanged.' : 'Restore failed and previous saves could not be fully recovered. Keep this tab and your backup code open.');
+      failure.storage = true;
+      throw failure;
+    }
+    return nextMeta;
+  }
 
   let meta = loadMeta();
   let run = null;
@@ -192,7 +227,7 @@
 
   /* ================= Tips ================= */
   const TIPS = {
-    market: 'Prices here are live. The tag compares each price with the regional average: green is cheap, gold is dear. Tap a cargo to trade.',
+    market: 'Buy cargo here, open Map to choose a destination, then sail and sell. Keep cash for voyage costs. Price tags compare with the regional average; prices elsewhere may be old.',
     map: 'Tap a port to plan a voyage. You only see live prices where you are. Elsewhere you see the last prices you heard, so check how old they are.',
     office: 'Contracts pay a premium if you deliver by a deadline. Banks lend cheaply at big ports. The Ah Long lends anywhere, at 3% a day.',
     ship: 'Bigger ships carry more but cost more to run each day. Your ship counts toward net worth at 60% of its price.',
@@ -349,7 +384,7 @@
     const s = run;
     const officeDot = s.offers.length > 0 || s.news.some(n => n.id > UI.seenNews && n.day <= s.day && n.kind === 'rumour');
     const shipDot = MM.PORTS[s.port].yard && s.ship.cond < 60;
-    const t = (id, icon, label, dot) => '<button class="tab ' + (UI.tab === id ? 'on' : '') + '" data-a="tab" data-id="' + id + '">' + icon + '<span>' + label + '</span>' + (dot ? '<i class="dot"></i>' : '') + '</button>';
+    const t = (id, icon, label, dot) => '<button class="tab ' + (UI.tab === id ? 'on' : '') + '" data-a="tab" data-id="' + id + '"' + (UI.tab === id ? ' aria-current="page"' : '') + '>' + icon + '<span>' + label + '</span>' + (dot ? '<i class="dot"></i>' : '') + '</button>';
     return '<nav class="tabs">' + t('market', I.market, 'Market') + t('map', I.map, 'Map') + t('ship', I.ship, 'Ship', shipDot) + t('office', I.office, 'Office', officeDot) + '</nav>';
   }
   function ageLabel(age) { return age <= 0 ? 'today' : age === 1 ? '1 day old' : age + ' days old'; }
@@ -377,6 +412,7 @@
       '<svg class="title-ship" viewBox="0 0 160 110"><path d="M22 78 L138 78 Q 134 92 118 98 L 40 98 Q 26 92 22 78 Z" fill="#0B1726"/><rect x="78" y="14" width="4" height="66" fill="#0B1726"/><rect x="50" y="34" width="3.5" height="46" fill="#0B1726"/><path d="M82 18 Q 108 28 120 42 L 116 76 L 82 76 Z" fill="#14294A" stroke="#F2B84B" stroke-width="2.5" stroke-linejoin="round"/><path d="M82 32 Q 102 36 118 40 M82 46 Q 102 50 118 52 M82 60 Q 102 64 117 64" stroke="#F2B84B" stroke-width="2" fill="none" opacity=".85"/><path d="M53 38 Q 70 44 77 56 L 75 76 L 53 76 Z" fill="#14294A" stroke="#F2B84B" stroke-width="2.2" stroke-linejoin="round"/><path d="M53 52 Q 65 55 76 58 M53 64 Q 65 67 75 68" stroke="#F2B84B" stroke-width="1.8" fill="none" opacity=".85"/></svg>' +
       '<svg class="waves" viewBox="0 0 400 60" preserveAspectRatio="none"><path class="w1" d="M0 22 Q50 8 100 22 T200 22 T300 22 T400 22 T500 22 V60 H0Z"/><path class="w2" d="M0 34 Q50 22 100 34 T200 34 T300 34 T400 34 T500 34 V60 H0Z"/><path class="w3" d="M0 46 Q50 36 100 46 T200 46 T300 46 T400 46 T500 46 V60 H0Z"/></svg></div></div>' +
       '<div class="title-bottom"><div class="title-actions">' +
+      (storageWarning ? '<p class="warnline" role="status">Saving failed on this device. Copy a backup before closing the game.</p>' : '') +
       (UI.swWaiting ? '<button class="update" data-a="sw-update">' + I.spark + '<span>New version ready. <b>Tap to update</b></span></button>' : '') +
       (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season</span><small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></button>' : '') +
       '<button class="btn ' + (normal ? 'ghost' : 'primary big') + '" data-a="new-season">' + I.play + '<span>New season</span></button>' +
@@ -399,7 +435,7 @@
       const c = MM.CAPTAINS[id];
       const locked = c.unlock && !meta.unlocks[c.unlock];
       const cost = locked ? MM.UNLOCK_BY_ID[c.unlock].cost : 0;
-      h += '<button class="capt ' + (st.captain === id ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-capt" data-id="' + id + '">' + captAvatar(id, 46) +
+      h += '<button class="capt ' + (st.captain === id ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-capt" data-id="' + id + '" aria-pressed="' + (st.captain === id) + '">' + captAvatar(id, 46) +
         '<div><b>' + esc(c.name) + '</b><small>' + esc(c.title) + '</small><p>' + esc(c.desc) + '</p>' +
         (locked ? '<span class="lockline">' + I.lock + ' Unlock in Legacy · ' + cost + ' LP</span>' : '<span class="startline">Starts in ' + esc(pName(c.start)) + '</span>') + '</div></button>';
     });
@@ -407,7 +443,7 @@
     h += '<section><h3 class="sec">Monsoon level</h3><div class="levels">';
     for (let n = 0; n <= 10; n++) {
       const locked = n > meta.levelMax;
-      h += '<button class="lvl ' + (st.level === n ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-level" data-id="' + n + '">' + (locked ? I.lock : n) + '</button>';
+      h += '<button class="lvl ' + (st.level === n ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-level" data-id="' + n + '" aria-label="Monsoon level ' + n + (locked ? ', locked' : '') + '" aria-pressed="' + (st.level === n) + '">' + (locked ? I.lock : n) + '</button>';
     }
     h += '</div>';
     const mods = MM.LEVELS.slice(1, st.level + 1).map(l => l.desc);
@@ -416,7 +452,7 @@
     let cash = 50000 + (unl.perk_cash1 ? 25000 : 0) + (unl.perk_cash2 ? 50000 : 0) + (unl.perk_cash3 ? 100000 : 0);
     if (st.level >= 9) cash = Math.max(30000, cash - 20000);
     h += '<section class="setup-sum"><div><small>Starting cash</small><b>' + rm(cash) + '</b></div><div><small>Season</small><b>' + (st.level >= 5 ? 52 : 60) + ' days</b></div><div><small>Ship</small><b>Old Coaster</b></div></section>';
-    h += '</main><footer class="cta"><button class="btn primary big" data-a="start-season">' + I.play + '<span>Cast off</span></button></footer></div>';
+    h += '</main><footer class="cta"><button class="btn primary big" data-a="start-season">' + I.play + '<span>Start season</span></button></footer></div>';
     return h;
   }
 
@@ -488,7 +524,14 @@
     let h = tip('map');
     h += '<div class="map-box">' + mapSVG({ interactive: true, selected: UI.sheet && UI.sheet.type === 'port' ? UI.sheet.p : null }) +
       '<div class="map-legend"><span><i class="lg here"></i>You</span><span><i class="lg dest"></i>Contract</span><span><i class="lg lane"></i>Sea lane</span><span class="windnote">' + I.wind + (s.monsoon.phase === 'NE' ? 'Northeast monsoon: fast southwest' : 'Southwest monsoon: fast northeast') + '</span></div></div>';
-    h += '<p class="center-note">Tap a port to plan a voyage.</p>';
+    h += '<p class="center-note">Choose a port on the chart or from the list below.</p>';
+    h += '<section class="destinations"><h3 class="sec">Ports & voyages</h3><ul>' + MM.PORT_IDS.map(p => {
+      const here = p === s.port;
+      const available = s.ports.indexOf(p) >= 0;
+      const pl = available && !here ? MM.planVoyage(s, p) : null;
+      const detail = here ? 'You are here' : !available ? (s.mode === 'daily' ? 'Not in today’s voyage' : 'Unlock in Legacy') : plural(pl.days, 'day') + ' · arrive day ' + pl.arrive + (pl.tooLate ? ' · after season end' : ' · ' + rm(pl.cost) + ' running cost');
+      return '<li><button class="destination" data-a="port" data-p="' + p + '"><b>' + esc(pName(p)) + '</b><small>' + esc(detail) + '</small></button></li>';
+    }).join('') + '</ul></section>';
     h += priceBoard(s);
     return h;
   }
@@ -626,6 +669,7 @@
       '<li><span>Season result' + (s.level ? ' ×' + (1 + 0.2 * s.level).toFixed(1) : '') + '</span><b>+' + f.lpBase + '</b></li>' +
       (f.streakBonus ? '<li><span>Daily streak bonus</span><b>+' + f.streakBonus + '</b></li>' : '') +
       f.newAch.map(a => '<li class="ach"><span>' + I.star + esc(a.name) + '</span><b>+' + a.lp + '</b></li>').join('') + '</ul>' +
+      (f.rewardNote ? '<p class="reward-note">' + esc(f.rewardNote) + '</p>' : '') +
       (f.levelUp ? '<p class="lvlup">' + I.up + 'Monsoon level ' + f.levelUp + ' unlocked</p>' : '') + '</section>';
     h += '</main><footer class="cta stack"><button class="btn primary big" data-a="' + (s.mode === 'daily' ? 'go-title' : 'new-season') + '">' + I.play + '<span>' + (s.mode === 'daily' ? 'Done' : 'Sail another season') + '</span></button><div class="cta-row"><button class="btn ghost" data-a="go-title">Title</button><button class="btn" data-a="legacy">' + I.spark + '<span>Legacy · ' + meta.lp + '</span></button></div></footer></div>';
     return h;
@@ -671,12 +715,12 @@
 
   function screenSettings() {
     const st = meta.settings;
-    const tog = (k, label, sub) => '<button class="toggle-row" data-a="toggle" data-id="' + k + '"><div><b>' + label + '</b><small>' + sub + '</small></div><span class="switch ' + (st[k] ? 'on' : '') + '"><i></i></span></button>';
+    const tog = (k, label, sub) => '<button class="toggle-row" data-a="toggle" data-id="' + k + '" role="switch" aria-checked="' + !!st[k] + '"><div><b>' + label + '</b><small>' + sub + '</small></div><span class="switch ' + (st[k] ? 'on' : '') + '" aria-hidden="true"><i></i></span></button>';
     let h = '<div class="screen settings">' + topbar('Settings') + '<main class="scroll">';
     h += '<section class="group">' + tog('sound', 'Sound', 'Little chimes and creaks.') + tog('haptics', 'Vibration', 'Android only. iPhones don’t allow it in web apps.') + tog('motion', 'Animations', 'Turn off for a calmer screen.') + tog('tips', 'Tips', 'Show beginner hints.') + '</section>';
     h += '<section class="group"><button class="link-row" data-a="help">' + I.help + '<span>How to play</span></button><button class="link-row" data-a="reset-tips">' + I.info + '<span>Show all tips again</span></button></section>';
     h += '<section class="group"><h3 class="sec">Backup</h3><p class="small dim">Your progress lives on this device. Copy a backup code to keep it safe or move it to another phone.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
-      (UI.importOpen ? '<textarea id="importBox" placeholder="Paste a backup code here"></textarea><button class="btn sm primary" data-a="import">Restore from code</button>' : '') + '</section>';
+      (UI.importOpen ? '<label for="importBox">Backup code</label><textarea id="importBox" placeholder="Paste a backup code here"></textarea><button class="btn sm primary" data-a="import">Restore from code</button>' : '') + '</section>';
     h += '<section class="group"><button class="link-row danger" data-a="reset">' + I.close + '<span>Erase all progress</span></button></section>';
     h += '<p class="about">Monsoon Merchant v' + APP_VERSION + '. Made for offline play. No ads, no accounts, no tracking.</p>';
     h += '</main></div>';
@@ -693,7 +737,7 @@
     h += sec('The monsoon', '<p>The northeast monsoon speeds ships sailing southwest; the southwest monsoon speeds ships sailing northeast. Around mid-season the monsoon turns, and routes that were quick become slow. The weeks around the change bring squalls, and the southwest monsoon brings typhoons to the South China Sea.</p>');
     h += sec('Risk', '<p>Storms and pirates can cost you cargo. Insurance pays back 80% of what you lose. Storms also damage the hull. Repair it at a shipyard, because at 0% she sinks.</p>');
     h += sec('Money', '<p>Contracts pay a premium for delivering by a deadline. Miss it and you pay a penalty. Banks lend at about 0.25% a day at big ports. The Ah Long lends anywhere at 3% a day and wants it back within 10 days.</p>');
-    h += sec('Legacy', '<p>Every season earns Legacy points. Spend them on new captains, ports, cargo, ships and perks. Finish as Merchant or better to unlock harder Monsoon levels, which earn more Legacy.</p><p>The <b>Daily Voyage</b> uses the same seas for everyone each day. Play it daily to build a streak.</p>');
+    h += sec('Legacy', '<p>Season Legacy requires a completed voyage (shipwrecks count) and scales with days played; eligible runs earn at least 1 LP. Spend Legacy on new captains, ports, cargo, ships and perks. Finish as Merchant or better to unlock harder Monsoon levels, which earn more Legacy.</p><p>The <b>Daily Voyage</b> uses the same seas for everyone each day. Play it daily to build a streak.</p>');
     h += '</main></div>';
     return h;
   }
@@ -725,9 +769,10 @@
       const best = MM.bestKnownSell(s, g, s.port);
       const contract = s.contracts.find(k => k.good === g);
       facts = '<dl class="facts"><div><dt>Average price</dt><dd>' + (q ? num(qt.avg) : '—') + '</dd></div><div><dt>You receive</dt><dd><b>' + rm(qt.total) + '</b></dd></div>' +
-        '<div><dt>Profit</dt><dd class="' + (profit >= 0 ? 'pos' : 'neg') + '">' + (profit >= 0 ? '+' : '') + rm(profit) + (cost ? ' <span>' + pct(q ? qt.avg / cost - 1 : 0) + '</span>' : '') + '</dd></div>' +
+        '<div><dt>Trading profit</dt><dd class="' + (profit >= 0 ? 'pos' : 'neg') + '">' + (profit >= 0 ?  '+' : '') + rm(profit) + (cost ? ' <span>' + pct(q ? qt.avg / cost - 1 : 0) + '</span>' : '') + '</dd></div>' +
         '<div><dt>Price after</dt><dd>' + num(qt.after) + ' <span class="' + (qt.move > 0.1 ? 'neg' : 'dim') + '">−' + (qt.move * 100).toFixed(1) + '%</span></dd></div>' +
         (best ? '<div><dt>Best known elsewhere</dt><dd>' + esc(pShort(best.port)) + ' ' + num(best.price) + ' <i class="' + ageClass(best.age) + '">' + ageLabel(best.age) + '</i></dd></div>' : '') + '</dl>';
+      facts += '<p class="small dim">Trading profit is sale proceeds minus cargo purchase cost. Voyage costs, fees, interest and insurance are separate.</p>';
       if (contract) facts += '<p class="warnline">' + I.info + 'You have a contract for ' + num(contract.qty) + ' t of this to ' + esc(pName(contract.dest)) + '.</p>';
       btn = '<button class="btn primary big" data-a="do-trade" ' + (q <= 0 || q > hold ? 'disabled' : '') + '>Sell ' + num(q) + ' t · ' + rm(qt.total) + '</button>';
     }
@@ -739,8 +784,8 @@
     const max = sh.mode === 'buy' ? MM.maxBuy(s, g) : hold;
     const r = MM.marketRows(s).find(x => x.g === g);
     const head = '<header class="sh-head">' + gIcon(g) + '<div><h3>' + esc(gName(g)) + '</h3><small>Buy ' + num(r.buy) + ' · Sell ' + num(r.sell) + ' · regional avg ' + num(MM.GOODS[g].base) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
-    const seg = '<div class="seg"><button class="' + (sh.mode === 'buy' ? 'on' : '') + '" data-a="trade-mode" data-id="buy">Buy</button><button class="' + (sh.mode === 'sell' ? 'on' : '') + '" data-a="trade-mode" data-id="sell" ' + (hold ? '' : 'disabled') + '>Sell' + (hold ? ' (' + num(hold) + ' t)' : '') + '</button></div>';
-    const qty = '<div class="qty"><button class="qbtn" data-a="qty" data-d="-10">−10</button><button class="qbtn" data-a="qty" data-d="-1">' + I.minus + '</button><div class="qval"><b id="qVal">' + num(sh.q) + '</b><small>tonnes</small></div><button class="qbtn" data-a="qty" data-d="1">' + I.plus + '</button><button class="qbtn" data-a="qty" data-d="10">+10</button></div>' +
+    const seg = '<div class="seg"><button class="' + (sh.mode === 'buy' ? 'on' : '') + '" data-a="trade-mode" data-id="buy" aria-pressed="' + (sh.mode === 'buy') + '">Buy</button><button class="' + (sh.mode === 'sell' ? 'on' : '') + '" data-a="trade-mode" data-id="sell" aria-pressed="' + (sh.mode === 'sell') + '" ' + (hold ? '' : 'disabled') + '>Sell' + (hold ? ' (' + num(hold) + ' t)' : '') + '</button></div>';
+    const qty = '<div class="qty"><button class="qbtn" data-a="qty" data-d="-10" aria-label="Decrease quantity by 10 tonnes">−10</button><button class="qbtn" data-a="qty" data-d="-1" aria-label="Decrease quantity by 1 tonne">' + I.minus + '</button><div class="qval"><b id="qVal">' + num(sh.q) + '</b><small>tonnes</small></div><button class="qbtn" data-a="qty" data-d="1" aria-label="Increase quantity by 1 tonne">' + I.plus + '</button><button class="qbtn" data-a="qty" data-d="10" aria-label="Increase quantity by 10 tonnes">+10</button></div>' +
       '<input type="range" id="qRange" min="0" max="' + max + '" step="1" value="' + Math.min(sh.q, max) + '" data-a="qty-range" aria-label="Quantity">' +
       '<div class="quick"><button data-a="qty-set" data-f=".25">¼</button><button data-a="qty-set" data-f=".5">½</button><button data-a="qty-set" data-f=".75">¾</button><button data-a="qty-set" data-f="1">' + (sh.mode === 'buy' ? 'Max ' + num(max) : 'All ' + num(max)) + '</button></div>';
     return sheetWrap(head + seg + qty + '<div id="tradeDyn">' + tradeDyn() + '</div>', 'trade');
@@ -807,9 +852,16 @@
     if (s.ship.cond < 35) warns.push('Your hull is at ' + Math.round(s.ship.cond) + '%. A bad storm could sink her.');
     if (MM.cargoUsed(s) === 0) warns.push('Your hold is empty.');
     if (s.cash - (ins ? pl.premium : 0) < pl.cost) warns.push('Running costs (' + rm(pl.cost) + ') will push your cash below zero. Overdrafts cost 1% a day.');
+    s.contracts.forEach(c => {
+      if (pl.arrive > c.deadline) warns.push('Contract for ' + num(c.qty) + ' t ' + gName(c.good) + ' to ' + pName(c.dest) + ' is due day ' + c.deadline + '. This voyage arrives on day ' + pl.arrive + ', after its deadline.');
+      if (c.dest === p) {
+        const held = s.cargo[c.good] ? s.cargo[c.good].q : 0;
+        if (held < c.qty) warns.push('Contract at ' + pName(p) + ' needs ' + num(c.qty) + ' t ' + gName(c.good) + '; you carry ' + num(held) + ' t. Load ' + num(c.qty - held) + ' t more to deliver it on arrival.');
+      }
+    });
     let h = '<header class="sh-head"><span class="ul-ic">' + I.ship + '</span><div><h3>Sail to ' + esc(pName(p)) + '</h3><small>' + plural(pl.days, 'day') + ' · arrive day ' + pl.arrive + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
     h += '<dl class="facts"><div><dt>Running cost</dt><dd>' + rm(pl.cost) + '</dd></div><div><dt>Port fee on arrival</dt><dd>' + rm(MM.portFee(s)) + '</dd></div><div><dt>Storms / pirates</dt><dd><b class="risk ' + pl.stormLabel.toLowerCase() + '">' + pl.stormLabel + '</b> / <b class="risk ' + pl.pirateLabel.toLowerCase() + '">' + pl.pirateLabel + '</b></dd></div><div><dt>Cargo value (cost)</dt><dd>' + rm(pl.cargoValue) + '</dd></div></dl>';
-    if (pl.premium > 0) h += '<button class="toggle-row ins" data-a="toggle-ins"><div><b>Insure the cargo · ' + rm(pl.premium) + '</b><small>Pays back 80% of any cargo lost to storms or pirates on this voyage.</small></div><span class="switch ' + (ins ? 'on' : '') + '"><i></i></span></button>';
+    if (pl.premium > 0) h += '<button class="toggle-row ins" data-a="toggle-ins" role="switch" aria-checked="' + !!ins + '"><div><b>Insure the cargo · ' + rm(pl.premium) + '</b><small>Pays back 80% of any cargo lost to storms or pirates on this voyage.</small></div><span class="switch ' + (ins ? 'on' : '') + '" aria-hidden="true"><i></i></span></button>';
     if (warns.length) h += '<ul class="warns">' + warns.map(w => '<li>' + I.info + '<span>' + esc(w) + '</span></li>').join('') + '</ul>';
     h += '<button class="btn primary big" data-a="cast-off" data-p="' + p + '">' + I.ship + '<span>Cast off</span></button>';
     return sheetWrap(h, 'depart');
@@ -823,7 +875,8 @@
     const s = run;
     const row = (a, icon, label, sub, cls) => '<button class="link-row ' + (cls || '') + '" data-a="' + a + '">' + icon + '<span>' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span></button>';
     return sheetWrap('<header class="sh-head"><span class="ul-ic">' + I.anchor + '</span><div><h3>' + (s.mode === 'daily' ? 'Daily Voyage' : 'Season') + '</h3><small>Day ' + s.day + ' of ' + s.maxDays + ' · ' + esc(MM.CAPTAINS[s.captain].name) + (s.mode === 'daily' ? '' : ' · level ' + s.level) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>' +
-      '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Your voyage is saved. Pick it up any time.') +
+      '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Save your voyage to pick it up later.') +
+      row('export', I.download, 'Copy backup code', 'Keep a copy of your current progress.') +
       row('help-run', I.help, 'How to play', '') +
       row('toggle-sound', I.sound, 'Sound: ' + (meta.settings.sound ? 'on' : 'off'), '') +
       (s.phase === 'port' && !s.pending ? row('end-early', I.flag, 'End season now', 'Sell up here and score the season.', 'danger') : '') + '</div>', 'menu');
@@ -863,8 +916,30 @@
   }
 
   /* ================= Render ================= */
-  function renderOverlay() {
+  let overlayReturnFocus = null;
+  function focusBookmark(el) {
+    if (!el || (!el.id && !el.dataset.a)) return null;
+    return { id: el.id, tag: el.tagName, data: Object.assign({}, el.dataset) };
+  }
+  function findFocus(host, bookmark) {
+    if (!bookmark) return null;
+    if (bookmark.id) {
+      const el = document.getElementById(bookmark.id);
+      if (el && host.contains(el) && !el.disabled) return el;
+    }
+    return Array.from(host.querySelectorAll('[data-a]')).find(el => !el.disabled && el.tagName === bookmark.tag && Object.keys(bookmark.data).every(k => el.dataset[k] === bookmark.data[k])) || null;
+  }
+  function focusWithin(host, bookmark) {
+    const target = findFocus(host, bookmark) || host.querySelector('h1, h2, h3') || host;
+    if (!target.matches('button, input, textarea, select, a[href], [tabindex]')) target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }
+  function renderOverlay(screenFocus) {
     const host = document.getElementById('overlay'); if (!host) return;
+    const screenHost = document.getElementById('screen');
+    const wasOpen = !!host.querySelector('[role="dialog"]');
+    const previousFocus = host.contains(document.activeElement) ? focusBookmark(document.activeElement) : null;
+    const trigger = screenHost.contains(document.activeElement) ? focusBookmark(document.activeElement) : screenFocus;
     let h = '';
     if (UI.modal) {
       if (UI.modal.type === 'result') h = resultModal();
@@ -881,9 +956,25 @@
     }
     host.innerHTML = h;
     host.className = h ? 'open' : '';
+    screenHost.inert = !!h;
+    if (h) {
+      if (!wasOpen) overlayReturnFocus = trigger || null;
+      const dialog = host.querySelector('[role="dialog"]');
+      const title = dialog.querySelector('h3');
+      dialog.setAttribute('aria-modal', 'true');
+      if (title) { title.id = 'overlay-title'; dialog.setAttribute('aria-labelledby', title.id); }
+      focusWithin(dialog, previousFocus);
+    } else if (wasOpen) {
+      focusWithin(screenHost, overlayReturnFocus);
+      overlayReturnFocus = null;
+    }
   }
   function render() {
     const screenHost = document.getElementById('screen');
+    const oldKey = UI.renderedKey;
+    const screenHadFocus = screenHost.contains(document.activeElement);
+    const screenFocus = screenHadFocus ? focusBookmark(document.activeElement) : null;
+    root.classList.toggle('reduce-motion', reduceMotion());
     const sc = document.querySelector('#screen .scroll');
     if (sc) UI.scroll[UI.renderedKey] = sc.scrollTop;
     if (UI.screen === 'run' && UI.tab === 'office' && run) {
@@ -904,7 +995,8 @@
     UI.renderedKey = UI.screen + ':' + (UI.screen === 'run' ? UI.tab : '');
     const nsc = document.querySelector('#screen .scroll');
     if (nsc && UI.scroll[UI.renderedKey]) nsc.scrollTop = UI.scroll[UI.renderedKey];
-    renderOverlay();
+    renderOverlay(screenFocus);
+    if (!document.getElementById('overlay').classList.contains('open') && (screenHadFocus || (oldKey && oldKey !== UI.renderedKey))) focusWithin(screenHost, screenFocus);
     if (UI.screen === 'sea' && run && run.voyage) placeShip(UI.sea.frac);
     if (run && (UI.screen === 'run' || UI.screen === 'sea')) countCash();
   }
@@ -982,8 +1074,7 @@
   function finishSeason() {
     stopSea(); stopShip();
     const f = MM.endSeason(run, meta);
-    saveMeta();
-    lsDel(KEYS[UI.slot]);
+    if (saveMeta()) lsDel(KEYS[UI.slot]);
     UI.final = f; UI.endRun = run; run = null; UI.slot = null;
     UI.screen = 'end'; UI.modal = null; UI.sheet = null;
     render();
@@ -1012,7 +1103,7 @@
 
   /* ================= Actions ================= */
   const A = {
-    'go-title'() { stopSea(); stopShip(); if (run) saveRun(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
+    'go-title'() { if (run && !saveRun()) return; stopSea(); stopShip(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
     continue(d) { const s = loadSlot(d.slot); if (s) enterRun(d.slot, s); else render(); },
     'new-season'() {
       UI.setup.level = Math.min(UI.setup.level, meta.levelMax);
@@ -1057,6 +1148,7 @@
     'tip-ok'(d) { meta.tips[d.id] = 1; saveMeta(); render(); },
     export() {
       const data = { meta, normal: lsGet(KEYS.normal), daily: lsGet(KEYS.daily) };
+      if (run && UI.slot) data[UI.slot] = MM.serialize(run);
       const code = 'MM1:' + btoa(unescape(encodeURIComponent(JSON.stringify(data))));
       const done = () => toast('Backup code copied', 'good');
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, () => { UI.sheet = { type: 'info', title: 'Backup code', html: '<textarea readonly class="codebox">' + esc(code) + '</textarea>' }; renderOverlay(); });
@@ -1068,12 +1160,10 @@
       try {
         const raw = box.value.trim(); if (raw.indexOf('MM1:') !== 0) throw new Error('bad');
         const data = JSON.parse(decodeURIComponent(escape(atob(raw.slice(4)))));
-        if (!data.meta || !data.meta.stats) throw new Error('bad');
-        meta = mergeMeta(data.meta); saveMeta();
-        if (data.normal) lsSet(KEYS.normal, data.normal); else lsDel(KEYS.normal);
-        if (data.daily) lsSet(KEYS.daily, data.daily); else lsDel(KEYS.daily);
+        meta = restoreBackup(data);
+        storageWarning = false;
         UI.importOpen = false; toast('Progress restored', 'good'); UI.screen = 'title'; render();
-      } catch (e) { toast('That code didn’t work', 'bad'); Sound.error(); }
+      } catch (e) { toast(e.storage ? e.message : 'That code didn’t work. Your progress was not changed.', 'bad'); Sound.error(); }
     },
     reset() { UI.sheet = { type: 'confirm', title: 'Erase everything?', text: 'All Legacy, unlocks, achievements and seasons on this device will be deleted. This can’t be undone.', yes: 'reset-go', yesLabel: 'Erase', danger: true }; renderOverlay(); },
     'reset-go'() { lsDel(KEYS.meta); lsDel(KEYS.normal); lsDel(KEYS.daily); meta = MM.newMeta(); saveMeta(); UI.sheet = null; UI.screen = 'title'; toast('Progress erased'); render(); },
@@ -1108,6 +1198,7 @@
       MM.PORT_IDS.forEach(id => { const [x, y] = MAP.nodeXY(MM, id); const dd = Math.hypot(x - p.x, y - p.y); if (dd < bd) { bd = dd; best = id; } });
       if (best && bd < 55) { UI.sheet = { type: 'port', p: best }; Sound.tap(); renderOverlay(); }
     },
+    port(d) { if (!MM.PORTS[d.p]) return; UI.sheet = { type: 'port', p: d.p }; Sound.tap(); renderOverlay(); },
     plan(d) { UI.sheet = { type: 'depart', p: d.p, insure: run.insurePref !== false }; renderOverlay(); },
     'toggle-ins'() { UI.sheet.insure = !UI.sheet.insure; renderOverlay(); },
     'cast-off'(d) {
@@ -1137,7 +1228,7 @@
       afterAction(); render();
     },
     'end-season'() { finishSeason(); },
-    'end-early'() { UI.sheet = { type: 'confirm', title: 'End the season now?', text: 'Your cargo will be sold here at today’s prices, debts settled, and the season scored.', yes: 'end-season', yesLabel: 'End season', danger: true }; renderOverlay(); },
+    'end-early'() { UI.sheet = { type: 'confirm', title: 'End the season now?', text: 'Your cargo will be sold here at today’s prices, debts settled, and the season scored.<br><br>Season Legacy requires a completed voyage (shipwrecks count) and scales with days played; eligible runs earn at least 1 LP.', yes: 'end-season', yesLabel: 'End season', danger: true }; renderOverlay(); },
     accept(d) { const r = MM.acceptOffer(run, +d.id); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.good(); toast('Contract signed'); afterAction(); render(); },
     'bank-borrow'(d) { const amt = Math.floor(MM.bankLimit(run) * +d.f); const r = MM.bankBorrow(run, amt); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.buy(); toast('Borrowed ' + rm(amt) + ' from the bank'); afterAction(); render(); },
     'bank-repay'() { const r = MM.bankRepay(run, run.bank); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.good(); toast('Bank repaid'); afterAction(); render(); },
@@ -1198,6 +1289,23 @@
   root.addEventListener('input', ev => {
     const el = ev.target;
     if (el && el.dataset && el.dataset.a === 'qty-range') setQty(+el.value);
+  });
+  root.addEventListener('keydown', ev => {
+    const dialog = document.querySelector('#overlay [role="dialog"]');
+    if (!dialog) return;
+    if (ev.key === 'Escape' && dialog.classList.contains('sheet')) {
+      ev.preventDefault();
+      A['close-sheet']();
+    } else if (ev.key === 'Tab') {
+      const items = Array.from(dialog.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')).filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+      const first = items[0], last = items[items.length - 1];
+      if (!first) { ev.preventDefault(); focusWithin(dialog); return; }
+      const active = document.activeElement;
+      if (!dialog.contains(active) || active.tabIndex < 0 || (ev.shiftKey && active === first) || (!ev.shiftKey && active === last)) {
+        ev.preventDefault();
+        (ev.shiftKey ? last : first).focus();
+      }
+    }
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { stopSea(); saveRun(); saveMeta(); }

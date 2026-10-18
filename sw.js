@@ -1,5 +1,5 @@
 /* Monsoon Merchant service worker: caches the whole game so it runs with no connection. */
-const CACHE = 'mm-1.0.0';
+const CACHE = 'mm-1.0.1';
 const ASSETS = ['./', './index.html', './style.css', './engine.js', './map.js', './ui.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
