@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.1.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -485,6 +485,7 @@
   function buy(s, g, q) {
     if (!canAct(s)) return fail('Not now');
     if (s.goods.indexOf(g) < 0) return fail('Unknown cargo');
+    if (!Number.isFinite(q)) return fail('Enter a valid cargo quantity');
     q = Math.floor(q);
     if (q <= 0) return fail('Nothing to buy');
     if (q > freeSpace(s)) return fail('Not enough hold space');
@@ -500,6 +501,8 @@
   }
   function sell(s, g, q) {
     if (!canAct(s)) return fail('Not now');
+    if (s.goods.indexOf(g) < 0) return fail('Unknown cargo');
+    if (!Number.isFinite(q)) return fail('Enter a valid cargo quantity');
     const c = s.cargo[g];
     q = Math.floor(q);
     if (!c || q <= 0) return fail('Nothing to sell');
@@ -1038,6 +1041,7 @@
   function bankBorrow(s, amt) {
     if (!canAct(s)) return fail('Not now');
     if (!PORTS[s.port].bank) return fail('No bank here');
+    if (!Number.isFinite(amt)) return fail('Enter a valid amount');
     amt = Math.floor(amt);
     if (amt <= 0 || amt > bankLimit(s)) return fail('Over your credit limit');
     s.bank += amt; s.cash += amt; s.st.borrowed = true;
@@ -1047,6 +1051,7 @@
   function bankRepay(s, amt) {
     if (!canAct(s)) return fail('Not now');
     if (!PORTS[s.port].bank) return fail('No bank here');
+    if (!Number.isFinite(amt)) return fail('Enter a valid amount');
     amt = Math.min(Math.floor(amt), Math.floor(s.cash), Math.ceil(s.bank));
     if (amt <= 0) return fail('Nothing to repay');
     s.bank -= amt; s.cash -= amt;
@@ -1056,6 +1061,7 @@
   }
   function alongBorrow(s, amt) {
     if (!canAct(s)) return fail('Not now');
+    if (!Number.isFinite(amt)) return fail('Enter a valid amount');
     amt = Math.floor(amt);
     if (amt <= 0 || amt > alongLimit(s)) return fail('He won’t lend you that much');
     if (s.along <= 0) s.alongDue = s.day + 10;
@@ -1065,6 +1071,7 @@
   }
   function alongRepay(s, amt) {
     if (!canAct(s)) return fail('Not now');
+    if (!Number.isFinite(amt)) return fail('Enter a valid amount');
     amt = Math.min(Math.floor(amt), Math.floor(s.cash), Math.ceil(s.along));
     if (amt <= 0) return fail('Nothing to repay');
     s.along -= amt; s.cash -= amt;
