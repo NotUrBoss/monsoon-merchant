@@ -1,7 +1,7 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '1.0.1';
+  const APP_VERSION = '1.1.0';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
@@ -416,6 +416,7 @@
       (UI.swWaiting ? '<button class="update" data-a="sw-update">' + I.spark + '<span>New version ready. <b>Tap to update</b></span></button>' : '') +
       (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season</span><small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></button>' : '') +
       '<button class="btn ' + (normal ? 'ghost' : 'primary big') + '" data-a="new-season">' + I.play + '<span>New season</span></button>' +
+      '<button class="daily-card network-entry" data-a="network"><div class="dc-l">' + I.box + '</div><div class="dc-m"><b>Network Company <span class="new-tag">NEW</span></b><small>Sea, air &amp; rail · warehouses &amp; factories</small></div><span aria-hidden="true">→</span></button>' +
       '<button class="daily-card" data-a="daily">' +
       '<div class="dc-l">' + I.calendar + '</div><div class="dc-m"><b>Daily Voyage</b><small>' + esc(prettyDate(key)) + (dailyLive ? ' · in progress, day ' + daily.day : dailyBest !== undefined ? ' · best ' + rm(dailyBest) : ' · same seas for everyone') + '</small></div>' +
       '<div class="dc-r ' + (streakNow > 0 ? 'live' : '') + '">' + I.flame + '<b>' + streakNow + '</b></div></button>' +
@@ -719,9 +720,9 @@
     let h = '<div class="screen settings">' + topbar('Settings') + '<main class="scroll">';
     h += '<section class="group">' + tog('sound', 'Sound', 'Little chimes and creaks.') + tog('haptics', 'Vibration', 'Android only. iPhones don’t allow it in web apps.') + tog('motion', 'Animations', 'Turn off for a calmer screen.') + tog('tips', 'Tips', 'Show beginner hints.') + '</section>';
     h += '<section class="group"><button class="link-row" data-a="help">' + I.help + '<span>How to play</span></button><button class="link-row" data-a="reset-tips">' + I.info + '<span>Show all tips again</span></button></section>';
-    h += '<section class="group"><h3 class="sec">Backup</h3><p class="small dim">Your progress lives on this device. Copy a backup code to keep it safe or move it to another phone.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
+    h += '<section class="group"><h3 class="sec">Captain backup</h3><p class="small dim">Copy your captain seasons, Daily Voyage and Legacy to keep them safe. Network Company has its own Backup button inside that mode.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
       (UI.importOpen ? '<label for="importBox">Backup code</label><textarea id="importBox" placeholder="Paste a backup code here"></textarea><button class="btn sm primary" data-a="import">Restore from code</button>' : '') + '</section>';
-    h += '<section class="group"><button class="link-row danger" data-a="reset">' + I.close + '<span>Erase all progress</span></button></section>';
+    h += '<section class="group"><button class="link-row danger" data-a="reset">' + I.close + '<span>Erase captain progress</span></button></section>';
     h += '<p class="about">Monsoon Merchant v' + APP_VERSION + '. Made for offline play. No ads, no accounts, no tracking.</p>';
     h += '</main></div>';
     return h;
@@ -876,7 +877,7 @@
     const row = (a, icon, label, sub, cls) => '<button class="link-row ' + (cls || '') + '" data-a="' + a + '">' + icon + '<span>' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span></button>';
     return sheetWrap('<header class="sh-head"><span class="ul-ic">' + I.anchor + '</span><div><h3>' + (s.mode === 'daily' ? 'Daily Voyage' : 'Season') + '</h3><small>Day ' + s.day + ' of ' + s.maxDays + ' · ' + esc(MM.CAPTAINS[s.captain].name) + (s.mode === 'daily' ? '' : ' · level ' + s.level) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>' +
       '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Save your voyage to pick it up later.') +
-      row('export', I.download, 'Copy backup code', 'Keep a copy of your current progress.') +
+      row('export', I.download, 'Copy backup code', 'Backs up captain seasons, Daily Voyage and Legacy. Network Company uses its own Backup button.') +
       row('help-run', I.help, 'How to play', '') +
       row('toggle-sound', I.sound, 'Sound: ' + (meta.settings.sound ? 'on' : 'off'), '') +
       (s.phase === 'port' && !s.pending ? row('end-early', I.flag, 'End season now', 'Sell up here and score the season.', 'danger') : '') + '</div>', 'menu');
@@ -970,6 +971,7 @@
     }
   }
   function render() {
+    if (UI.screen === 'network') return;
     const screenHost = document.getElementById('screen');
     const oldKey = UI.renderedKey;
     const screenHadFocus = screenHost.contains(document.activeElement);
@@ -1103,6 +1105,12 @@
 
   /* ================= Actions ================= */
   const A = {
+    network() {
+      if (!window.MMNetworkUI || !window.MMNetwork) { toast('Network Company could not load. Reload the game and try again.', 'bad'); return; }
+      stopSea(); stopShip(); UI.sheet = null; UI.modal = null; run = null; UI.slot = null;
+      renderOverlay(); UI.screen = 'network';
+      window.MMNetworkUI.open({ root, onExit() { UI.screen = 'title'; render(); focusWithin(document.getElementById('screen')); } });
+    },
     'go-title'() { if (run && !saveRun()) return; stopSea(); stopShip(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
     continue(d) { const s = loadSlot(d.slot); if (s) enterRun(d.slot, s); else render(); },
     'new-season'() {
@@ -1165,7 +1173,7 @@
         UI.importOpen = false; toast('Progress restored', 'good'); UI.screen = 'title'; render();
       } catch (e) { toast(e.storage ? e.message : 'That code didn’t work. Your progress was not changed.', 'bad'); Sound.error(); }
     },
-    reset() { UI.sheet = { type: 'confirm', title: 'Erase everything?', text: 'All Legacy, unlocks, achievements and seasons on this device will be deleted. This can’t be undone.', yes: 'reset-go', yesLabel: 'Erase', danger: true }; renderOverlay(); },
+    reset() { UI.sheet = { type: 'confirm', title: 'Erase captain progress?', text: 'Captain seasons, Daily Voyage, Legacy, unlocks and achievements on this device will be deleted. Network Company is kept. This can’t be undone.', yes: 'reset-go', yesLabel: 'Erase', danger: true }; renderOverlay(); },
     'reset-go'() { lsDel(KEYS.meta); lsDel(KEYS.normal); lsDel(KEYS.daily); meta = MM.newMeta(); saveMeta(); UI.sheet = null; UI.screen = 'title'; toast('Progress erased'); render(); },
     install() { const e = UI.installEvt; if (!e) return; e.prompt(); e.userChoice.then(() => { UI.installEvt = null; render(); }); },
     'sw-update'() { if (UI.swWaiting) UI.swWaiting.postMessage({ type: 'SKIP_WAITING' }); },

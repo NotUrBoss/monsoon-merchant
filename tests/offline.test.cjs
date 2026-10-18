@@ -12,7 +12,7 @@ test('service worker precaches every app asset and serves cached navigation offl
   const deleted = [];
   const sandbox = {
     URL,
-    self: {location: {origin: 'https://example.test'}, addEventListener: (name, fn) => handlers[name] = fn,
+    self: {location: {origin: 'https://example.test', href: 'https://example.test/monsoon-merchant/sw.js'}, addEventListener: (name, fn) => handlers[name] = fn,
       clients: {claim: async () => {claimed = true;}}, skipWaiting() {}},
     caches: {
       open: async () => ({addAll: async assets => {
@@ -22,8 +22,8 @@ test('service worker precaches every app asset and serves cached navigation offl
           cached.set(asset, fs.readFileSync(file));
         }
       }}),
-      match: async key => cached.get(key),
-      keys: async () => ['mm-1.0.0', 'mm-1.0.1', 'another-app'],
+      match: async key => cached.get(typeof key === 'string' ? key : './' + new URL(key.url).pathname.split('/').pop()),
+      keys: async () => ['mm-1.0.1', 'mm-1.1.0', 'another-app'],
       delete: async key => deleted.push(key)
     },
     fetch: async () => {throw new Error('offline');}
@@ -32,12 +32,17 @@ test('service worker precaches every app asset and serves cached navigation offl
   let pending;
   handlers.install({waitUntil(p) {pending = p;}});
   await pending;
-  assert.equal(cached.size, 11);
+  assert.equal(cached.size, 13);
+  assert.ok(cached.has('./logistics.js'));
+  assert.ok(cached.has('./network-ui.js'));
   handlers.activate({waitUntil(p) {pending = p;}});
   await pending;
   assert.equal(claimed, true);
-  assert.deepEqual(deleted, ['mm-1.0.0']);
+  assert.deepEqual(deleted, ['mm-1.0.1']);
   handlers.fetch({request: {url: 'https://example.test/monsoon-merchant/', method: 'GET', mode: 'navigate'},
     respondWith(p) {pending = p;}});
   assert.match((await pending).toString(), /Monsoon Merchant/);
+  handlers.fetch({request: {url: 'https://example.test/monsoon-merchant/icon-512.png', method: 'GET', mode: 'navigate'},
+    respondWith(p) {pending = p;}});
+  assert.deepEqual(await pending, fs.readFileSync(path.join(root, 'icon-512.png')), 'direct image navigation must return the image, not the game shell');
 });
