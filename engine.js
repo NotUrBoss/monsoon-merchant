@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -1140,6 +1140,10 @@
   function dayKeyShift(key, d) { const t = Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10)) + d * 86400000; return new Date(t).toISOString().slice(0, 10); }
   function endSeason(s, meta) {
     if (s.final) return s.final;
+    // Retirement rewards require a real voyage. Waiting at the starting port
+    // must not turn starting capital into endlessly repeatable Legacy points.
+    const rewardEligible = s.st.voyages > 0 && s.st.daysAtSea > 0 && (s.phase === 'port' || s.sunk);
+    const rewardFraction = clamp((s.day - 1) / Math.max(1, s.maxDays - 1), 0, 1);
     let sold = 0;
     if (s.phase === 'port') {
       for (const g of Object.keys(s.cargo)) {
@@ -1156,8 +1160,11 @@
     if (nw > s.st.peak) s.st.peak = nw;
     s.phase = 'ended'; s.pending = null;
     const rank = rankFor(nw);
-    const base = seasonLP(nw, s.level);
-    const f = { nw, cash: Math.round(s.cash), sold: Math.round(sold), ship, debts, rank, rankName: RANKS[rank].name, lp: base, lpBase: base, streakBonus: 0, levelUp: false, newAch: [], day: s.day };
+    const base = rewardEligible ? Math.max(1, Math.round(seasonLP(nw, s.level) * rewardFraction)) : 0;
+    const rewardNote = !rewardEligible
+      ? 'Complete a voyage to earn season Legacy. Shipwrecks at sea also count.'
+      : rewardFraction < 1 ? 'Season Legacy is scaled to the days played. A season with a completed voyage or shipwreck earns at least 1 LP.' : '';
+    const f = { nw, cash: Math.round(s.cash), sold: Math.round(sold), ship, debts, rank, rankName: RANKS[rank].name, lp: base, lpBase: base, streakBonus: 0, levelUp: false, newAch: [], day: s.day, rewardEligible, rewardFraction, rewardNote };
     s.final = f;
     if (meta) {
       const m = meta.stats;
@@ -1166,7 +1173,7 @@
       m.profit += Math.max(0, nw - (s.hist[0] ? s.hist[0][1] : 0));
       if (nw > m.best) { m.best = nw; f.personalBest = true; }
       if (m.bestRank === null || rank > m.bestRank) m.bestRank = rank;
-      if (s.mode === 'daily' && s.dateKey) {
+      if (s.mode === 'daily' && s.dateKey && rewardEligible) {
         const d = meta.daily;
         if (d.last !== s.dateKey) {
           d.streak = d.last === dayKeyShift(s.dateKey, -1) ? d.streak + 1 : 1;
@@ -1179,12 +1186,12 @@
         const keys = Object.keys(d.best).sort();
         while (keys.length > 60) { const k = keys.shift(); delete d.best[k]; delete d.plays[k]; }
       }
-      if (s.mode === 'normal' && s.level === meta.levelMax && rank >= MERCHANT_RANK && meta.levelMax < 10) { meta.levelMax++; f.levelUp = meta.levelMax; }
+      if (rewardEligible && s.mode === 'normal' && s.level === meta.levelMax && rank >= MERCHANT_RANK && meta.levelMax < 10) { meta.levelMax++; f.levelUp = meta.levelMax; }
       f.lp = base + f.streakBonus;
       meta.lp += f.lp; meta.lpTotal += f.lp;
       meta.history.unshift({ t: Date.now(), mode: s.mode, date: s.dateKey, captain: s.captain, level: s.level, nw, rank, twist: s.twist });
       if (meta.history.length > 40) meta.history.length = 40;
-      f.newAch = checkAch(s, meta, true);
+      f.newAch = checkAch(s, meta, rewardEligible);
     }
     return f;
   }
@@ -1290,7 +1297,137 @@
   }
 
   function serialize(s) { return JSON.stringify(s); }
-  function deserialize(str) { const s = JSON.parse(str); if (!s || s.v !== 1) throw new Error('Unsupported save'); return s; }
+  const saveRecord = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const saveId = x => typeof x === 'string' && /^[a-z][a-z0-9_-]*$/i.test(x);
+  const saveDate = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  const saveHas = (table, id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(table, id);
+  function saveRequire(ok) { if (!ok) throw new Error('Invalid save data'); }
+  function parseSave(str) {
+    saveRequire(typeof str === 'string' && str.length <= 2000000);
+    return JSON.parse(str, (key, value) => {
+      saveRequire(key !== '__proto__' && key !== 'prototype' && key !== 'constructor');
+      saveRequire(typeof value !== 'number' || Number.isFinite(value));
+      return value;
+    });
+  }
+  function saveNumbers(obj, keys) {
+    saveRequire(saveRecord(obj));
+    keys.forEach(k => saveRequire(Number.isFinite(obj[k])));
+  }
+  function deserialize(str) {
+    const s = parseSave(str);
+    saveRequire(saveRecord(s) && s.v === 1);
+    saveRequire(['normal', 'daily'].includes(s.mode) && ['port', 'sea', 'sunk', 'ended'].includes(s.phase));
+    saveRequire(saveHas(CAPTAINS, s.captain) && saveHas(PORTS, s.port));
+    saveRequire(s.twist === null || saveHas(TWISTS, s.twist));
+    saveRequire(s.mode !== 'daily' || saveDate(s.dateKey));
+    saveNumbers(s, ['day', 'maxDays', 'level', 'cash', 'bank', 'along', 'alongDue', 'seq']);
+    saveRequire(Number.isInteger(s.day) && s.day >= 1 && s.maxDays >= 1 && s.level >= 0 && s.level <= 10);
+    saveRequire(s.bank >= 0 && s.along >= 0);
+    [s.rngW, s.rngL].forEach(r => saveRequire(Array.isArray(r) && r.length === 4 && r.every(Number.isInteger)));
+    [[s.ports, PORTS], [s.goods, GOODS]].forEach(([ids, table]) => {
+      saveRequire(Array.isArray(ids) && ids.length > 0 && ids.every(id => saveHas(table, id)) && new Set(ids).size === ids.length);
+    });
+    saveRequire(s.ports.includes(s.port));
+    saveNumbers(s.ship, ['cond']);
+    saveRequire(saveHas(SHIPS, s.ship.cls) && s.ship.cond >= 0 && s.ship.cond <= 100 && saveRecord(s.ship.up));
+    saveRequire(saveRecord(s.perks) && saveRecord(s.cargo) && saveRecord(s.mk) && saveRecord(s.G) && saveRecord(s.known));
+    Object.keys(s.cargo).forEach(g => {
+      const c = s.cargo[g];
+      saveRequire(s.goods.includes(g)); saveNumbers(c, ['q', 'cost']);
+      saveRequire(Number.isInteger(c.q) && c.q > 0 && c.cost >= 0);
+      if (GOODS[g].perish) saveRequire(Array.isArray(c.lots));
+      if (c.lots !== undefined) {
+        saveRequire(Array.isArray(c.lots));
+        c.lots.forEach(l => { saveNumbers(l, ['q', 'd']); saveRequire(l.q > 0); });
+        saveRequire(c.lots.reduce((q, l) => q + l.q, 0) === c.q);
+      }
+    });
+    saveRequire(cargoUsed(s) <= shipCap(s));
+    s.ports.forEach(p => {
+      saveRequire(saveRecord(s.mk[p]));
+      s.goods.forEach(g => { saveNumbers(s.mk[p][g], ['L', 'I']); saveRequire(Number.isFinite(s.G[g])); });
+    });
+    Object.keys(s.known).forEach(p => {
+      saveRequire(s.ports.includes(p)); saveNumbers(s.known[p], ['day']);
+      saveRequire(saveRecord(s.known[p].mid));
+      Object.keys(s.known[p].mid).forEach(g => saveRequire(s.goods.includes(g) && Number.isFinite(s.known[p].mid[g])));
+    });
+    saveNumbers(s.monsoon, ['shiftDay', 'forecast']);
+    saveRequire(['NE', 'SW'].includes(s.monsoon.phase));
+    saveNumbers(s.st, ['trades', 'profitSales', 'maxSale', 'maxMove', 'bestTrade', 'spent', 'revenue', 'costs', 'fees', 'premiums', 'claims', 'storms', 'pirates', 'escapes', 'contracts', 'failed', 'contractPay', 'durianSales', 'peak', 'm1Day', 'voyages', 'daysAtSea', 'reports', 'spoiled', 'lostValue']);
+    ['events', 'news', 'offers', 'contracts', 'hist', 'log'].forEach(k => saveRequire(Array.isArray(s[k])));
+    s.hist.forEach(h => saveRequire(Array.isArray(h) && h.length === 2 && h.every(Number.isFinite)));
+    s.log.forEach(l => { saveNumbers(l, ['day']); saveRequire(typeof l.text === 'string' && saveId(l.kind)); });
+    s.news.forEach(n => {
+      saveNumbers(n, ['day', 'id']); saveRequire(typeof n.text === 'string' && saveId(n.kind));
+      if (n.tag !== undefined) saveRequire(saveId(n.tag));
+      if (n.end !== undefined) saveRequire(Number.isFinite(n.end));
+    });
+    s.events.forEach(e => {
+      saveNumbers(e, ['id', 'start', 'end', 'mult']);
+      saveRequire(s.goods.includes(e.good) && (e.port === null || s.ports.includes(e.port)) && typeof e.headline === 'string' && saveId(e.kind));
+      if (e.ports != null) saveRequire(Array.isArray(e.ports) && e.ports.every(p => saveHas(PORTS, p)));
+    });
+    s.ports.forEach(p => s.goods.forEach(g => saveRequire(Number.isFinite(mid(s, p, g)) && mid(s, p, g) > 0)));
+    s.offers.concat(s.contracts).forEach(c => {
+      saveNumbers(c, ['id', 'qty', 'deadline', 'pay', 'penalty']);
+      saveRequire(s.goods.includes(c.good) && s.ports.includes(c.dest) && c.qty > 0);
+    });
+    if (s.phase === 'sea' || s.phase === 'sunk') saveRequire(saveRecord(s.voyage));
+    if (s.phase !== 'ended') saveRequire(s.final == null);
+    else {
+      saveNumbers(s.final, ['nw', 'cash', 'sold', 'ship', 'debts', 'rank', 'lp', 'lpBase', 'streakBonus', 'day']);
+      saveRequire(Number.isInteger(s.final.rank) && s.final.rank >= 0 && s.final.rank < RANKS.length && Array.isArray(s.final.newAch));
+    }
+    if (s.voyage != null) {
+      const v = s.voyage;
+      saveNumbers(v, ['days', 'idx', 'premium', 'startDay']);
+      saveRequire(s.ports.includes(v.from) && s.ports.includes(v.to) && v.from !== v.to && v.days >= 1 && v.idx >= 0 && Array.isArray(v.log));
+    }
+    if (s.pending != null) {
+      const e = s.pending;
+      saveRequire(saveRecord(e) && ['storm', 'pirates', 'engine', 'salvage', 'trader', 'crew', 'current', 'radio', 'customs'].includes(e.type));
+      saveRequire(typeof e.title === 'string' && typeof e.text === 'string' && Array.isArray(e.choices) && e.choices.length > 0 && saveRecord(e.ctx));
+      e.choices.forEach(c => saveRequire(saveRecord(c) && saveId(c.id) && typeof c.label === 'string' && (c.sub === undefined || typeof c.sub === 'string')));
+      saveRequire(e.choices.some(c => !c.disabled));
+      const fields = { storm: ['wait'], engine: ['cost'], trader: ['q', 'unit', 'total'], crew: ['cost'], customs: ['fee'] }[e.type];
+      if (fields) saveNumbers(e.ctx, fields);
+      if (e.type === 'pirates' && !e.ctx.empty) saveNumbers(e.ctx, ['bribe', 'pRun']);
+      if (e.type === 'trader') saveRequire(s.goods.includes(e.ctx.good));
+      if (e.type !== 'customs') saveRequire(s.phase === 'sea' && s.voyage);
+    }
+    saveRequire(Number.isFinite(netWorth(s)));
+    return s;
+  }
+  function deserializeMeta(str) {
+    const m = parseSave(str), b = newMeta();
+    saveRequire(saveRecord(m) && (m.v === undefined || m.v === 1) && saveRecord(m.stats));
+    ['settings', 'stats', 'daily', 'unlocks', 'ach', 'tips'].forEach(k => {
+      saveRequire(m[k] === undefined || saveRecord(m[k]));
+    });
+    const out = Object.assign({}, b, m);
+    ['settings', 'stats', 'daily'].forEach(k => { out[k] = Object.assign({}, b[k], m[k] || {}); });
+    saveNumbers(out, ['lp', 'lpTotal', 'levelMax']);
+    saveRequire(out.lp >= 0 && out.lpTotal >= 0 && Number.isInteger(out.levelMax) && out.levelMax >= 0 && out.levelMax <= 10);
+    Object.keys(b.settings).forEach(k => saveRequire(typeof out.settings[k] === 'boolean'));
+    Object.keys(b.stats).filter(k => k !== 'bestRank').forEach(k => saveRequire(Number.isFinite(out.stats[k])));
+    const rank = out.stats.bestRank;
+    saveRequire(rank === null || (Number.isInteger(rank) && rank >= 0 && rank < RANKS.length));
+    saveNumbers(out.daily, ['streak', 'bestStreak']);
+    saveRequire(out.daily.last === null || saveDate(out.daily.last));
+    ['best', 'plays'].forEach(k => {
+      saveRequire(saveRecord(out.daily[k]));
+      Object.keys(out.daily[k]).forEach(d => saveRequire(saveDate(d) && Number.isFinite(out.daily[k][d])));
+    });
+    saveRequire(Array.isArray(out.history));
+    out.history.forEach(h => {
+      saveNumbers(h, ['t', 'level', 'nw', 'rank']);
+      saveRequire(saveHas(CAPTAINS, h.captain) && Number.isInteger(h.rank) && h.rank >= 0 && h.rank < RANKS.length);
+      saveRequire(['normal', 'daily'].includes(h.mode) && (h.mode !== 'daily' || saveDate(h.date)));
+    });
+    return out;
+  }
 
   const MM = {
     VERSION, PORTS, PORT_IDS, GOODS, GOOD_IDS, PF, SHIPS, SHIP_IDS, UPGRADES, CAPTAINS, CAPTAIN_IDS, UNLOCKS, UNLOCK_BY_ID, LEVELS, RANKS, TWISTS, ACH, NODES, EDGES, REGION_NAMES, MERCHANT_RANK,
@@ -1302,7 +1439,7 @@
     reportCost, buyReport, shipOffers, buyShip, buyUpgrade, repairCost, repair, acceptOffer, portFee, shipSpeed, hullEff, runChance,
     waitDay, endSeason, rankFor, seasonLP, checkAch, unlock, dayKeyShift,
     knownSell, bestKnownSell, bestKnownBuy, marketRows, portProfile, newsFeed, upcomingDeadlines, cargoRows,
-    serialize, deserialize, canAct,
+    serialize, deserialize, deserializeMeta, canAct,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = MM;
   else root.MM = MM;

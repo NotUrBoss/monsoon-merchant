@@ -30,4 +30,19 @@ Plain HTML, CSS and JavaScript with no build step and no external requests:
 - sw.js: service worker for offline play
 - manifest.webmanifest and icons: installable app metadata
 
-To publish an update, change the files, bump CACHE in sw.js and APP_VERSION in ui.js, then push. Installed copies show an "update ready" banner on the title screen.
+To publish an update, change the files, bump CACHE in sw.js, APP_VERSION in ui.js and VERSION in engine.js, then push. Installed copies show an "update ready" banner on the title screen.
+
+## Review and checks
+
+Run the dependency-free regression suite with a current Node.js release:
+
+```sh
+node --test tests/*.test.cjs
+```
+
+In environments that block child processes, use `node --test --test-isolation=none tests/*.test.cjs`.
+Tests cover progression rewards, save compatibility and validation, backup restoration, seeded seasons, offline caching, and structured data. Browser journeys and remaining recommendations are recorded in `docs/review.md`.
+
+The page describes the game with Schema.org `VideoGame` and `WebApplication` JSON-LD. It includes factual free-play metadata and does not fabricate reviews or ratings. Structured data does not guarantee enhanced search results.
+
+Work on a review branch and merge its pull request only when ready to publish: this repository's `main` branch supplies the live GitHub Pages game.
