@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import os
 import threading
 import traceback
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +17,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-KEY = 'mm.company.v2'
+KEY = 'mm.company.v3'
 TABS = ('world', 'market', 'bridge', 'shipments', 'industry', 'orders')
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -204,12 +205,12 @@ def finance_journey(page, context, url, out):
 
 def migration_journey(page, context, url, out):
     page.goto(url, wait_until='networkidle')
-    old = page.evaluate('''() => {const s=MMNetwork.create('migration-fixture');delete s.captain;s.version=1;
+    old = page.evaluate('''() => {const s=MMNetwork.create('migration-fixture');delete s.captain;delete s.customer;s.version=1;
       const raw=JSON.stringify(s);localStorage.setItem('mm.network.v1',raw);return raw;}''')
     page.locator('[data-a="network"]').click()
     click(page, 'continue')
     migrated = state(page)
-    assert migrated['version'] == 2 and migrated['captain']['ship'] == 'coaster'
+    assert migrated['version'] == 3 and migrated['captain']['ship'] == 'coaster'
     assert migrated['cash'] == json.loads(old)['cash']
     assert page.evaluate("localStorage.getItem('mm.network.v1')") == old
     click(page, 'exit')
@@ -236,6 +237,137 @@ def storage_failure(page, context, url, out):
     assert page.locator('.network-screen').count() == 1, 'unsaved game must not silently vanish'
     page.screenshot(path=str(out/'storage-failure.png'))
 
+def low_click_journey(page, context, url, out):
+    start(page, url)
+    actions=[]
+    def action(selector, label):
+        page.locator(selector).click();actions.append(label)
+    initial=state(page)
+    action('[data-n="plan-order"][data-order="straits"]','Review Straits plan')
+    assert state(page)==initial, 'planning must be free of mutations'
+    action('[data-n="route-confirm"][data-mode="captain"]','Confirm own-ship plan')
+    committed=state(page)
+    assert committed['captain']['cargo']['palm']==20
+    assert committed['captain']['voyage'] is not None
+    assert committed['warehouses']['singapore']['stock']['palm']==0
+    action('[data-n="advance-next"]','Advance to next event')
+    action('[data-n="fulfill-order"][data-order="straits"]','Fulfil delivered order')
+    assert len(actions)==4
+    assert state(page)['captain']['orders']['straits']=='fulfilled'
+    click(page,'food-chain');click(page,'smart-produce')
+    assert state(page)['production'][0]['output']['food']==30
+    click(page,'advance-next')
+    assert state(page)['warehouses']['klang']['stock']['food']==30
+    page.locator('[data-n="plan-order"][data-order="pantry"]').click()
+    # The captain is in Singapore; chartered cargo must not teleport the captain.
+    assert 'must be docked at the origin' in page.locator('.route-planner').inner_text()
+    page.locator('[data-n="route-confirm"][data-mode="sea"]').click()
+    while state(page)['day']<8:
+        click(page,'advance-next')
+    assert page.locator('.customer-decision').count()==1
+    before=state(page)['cash']
+    page.locator('[data-n="customer-choice"][data-choice="priority"]').click()
+    assert state(page)['cash']==before, 'negotiation cannot award free cash'
+    assert state(page)['customer']['choice']=='priority'
+    page.locator('[data-n="fulfill-order"][data-order="pantry"]').click()
+    assert state(page)['cash']==before+130000
+    assert state(page)['warehouses']['singapore']['stock']['food']==0
+    # Dismissal and presentation settings are not simulation commands.
+    saved=state(page);click(page,'effects');click(page,'report-close')
+    assert state(page)==saved
+    page.screenshot(path=str(out/'interactive-company.png'))
+    click(page,'backup');raw=page.locator('#net-backup-code').input_value()
+    page.locator('#net-import').fill(raw);click(page,'restore')
+    assert state(page)==saved
+    advance_to(page,60)
+    assert state(page)['status']=='finished'
+    (out/'first-delivery-actions.json').write_text(json.dumps({'actions':actions,'primary_actions':4,'scope':'after Start company; prefilled 20 t Straits own-ship order'},indent=2))
+    page.screenshot(path=str(out/'smart-season-complete.png'))
+
+def planner_interaction_journey(page, context, url, out):
+    start(page,url)
+    initial=state(page)
+    page.locator('[data-n="plan-order"][data-order="straits"]').click()
+    for width,height in ((320,740),(375,812),(768,1024),(1440,1000)):
+        page.set_viewport_size({'width':width,'height':height});no_overflow(page)
+        for value in ('-1','0','1.5','1e2',''):
+            number(page,'routeQty',value)
+            assert page.locator('[data-n="route-confirm"]').count()==0
+            assert state(page)==initial
+        number(page,'routeQty','20')
+        page.locator('.route-planner').scroll_into_view_if_needed()
+        page.screenshot(path=str(out/f'route-{width}.png'))
+    # Destination selection by keyboard works without spending any money.
+    page.locator('.world-hub[data-hub="bangkok"]').focus();page.keyboard.press('Enter')
+    assert page.locator('#net-routeTo').input_value()=='bangkok'
+    assert state(page)==initial
+    click(page,'route-cancel');assert state(page)==initial
+    # Direct SVG factory interaction has a visible keyboard/touch alternative.
+    page.locator('svg [data-n="port-action"][data-tab="industry"]').focus();page.keyboard.press('Enter')
+    assert page.locator('[data-n="build-factory"]').count()==1
+    tab(page,'world')
+    page.locator('.port-actions [data-tab="market"]').click()
+    assert page.locator('[data-n="trade"]').count()==1
+    tab(page,'world')
+    page.locator('[data-n="plan-order"][data-order="straits"]').click()
+    page.locator('[data-n="route-confirm"][data-mode="sea"]').dblclick()
+    assert len(state(page)['shipments'])==1
+    assert state(page)['stats']['trades']==1
+    assert state(page)['day']==1
+
+def v2_migration_journey(page, context, url, out):
+    page.goto(url,wait_until='networkidle')
+    old=page.evaluate('''() => {const s=MMNetwork.create('v2-fixture',true);
+      MMNetwork.buildWarehouse(s,'singapore');MMNetwork.trade(s,'klang','palm',20,'buy');
+      MMNetwork.transferCargo(s,'palm',20,'load');MMNetwork.sail(s,'singapore');
+      delete s.customer;s.version=2;const raw=JSON.stringify(s);localStorage.setItem('mm.company.v2',raw);return raw;}''')
+    page.locator('[data-a="network"]').click();click(page,'continue')
+    migrated=state(page);original=json.loads(old)
+    assert migrated['version']==3
+    for key in ('cash','debt','warehouses','captain','day'):
+        assert migrated[key]==original[key]
+    assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
+    page.wait_for_function('navigator.serviceWorker.controller !== null')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-1.3.0');return (await c.keys()).map(r=>r.url);}''')
+    assert any(x.endswith('/company-actions.js') for x in cached)
+    assert any(x.endswith('/company-play.js') for x in cached)
+    context.set_offline(True);resume(page,url)
+    assert state(page)==migrated
+    click(page,'advance-next')
+    assert state(page)['warehouses']['singapore']['stock']['palm']==20
+    assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
+    page.screenshot(path=str(out/'v2-migrated-offline.png'))
+    context.set_offline(False)
+
+def decision_and_effects_journey(page, context, url, out):
+    start(page,url);advance_to(page,7)
+    # Existing advanced inputs remain available; all setup is through controls.
+    page.locator('.company-world [data-n="route-open"]').click()
+    choose(page,'routeTo','sydney');choose(page,'routeGood','coal');number(page,'routeQty',10)
+    click(page,'route-buy');click(page,'route-build')
+    page.locator('[data-n="route-confirm"][data-mode="sea"]').click()
+    click(page,'advance-next');assert state(page)['day']==8
+    assert page.locator('[data-n="advance-next"]').is_disabled()
+    before=state(page)
+    page.locator('[data-n="customer-choice"][data-choice="extension"]').click()
+    assert state(page)['customer']['choice']=='extension'
+    assert state(page)['cash']==before['cash']
+    tab(page,'orders')
+    pantry=page.locator('.company-order').filter(has_text='Singapore pantry supply')
+    assert 'Day 35' in pantry.inner_text() and '95,000' in pantry.inner_text()
+    before=state(page)
+    click(page,'effects');click(page,'effects');click(page,'report-close')
+    assert state(page)==before
+    click(page,'backup');raw=page.locator('#net-backup-code').input_value()
+    bad=json.loads(raw);bad['customer']['decidedDay']=1
+    page.locator('#net-import').fill(json.dumps(bad));click(page,'restore');assert state(page)==before
+    page.locator('#net-import').fill(raw);click(page,'restore');assert state(page)==before
+    # The next event cannot silently sail past day-15 open contract deadlines.
+    click(page,'advance-next');assert state(page)['day']==15
+    assert state(page)['captain']['orders']['straits']=='open'
+    assert page.locator('[data-n="advance-next"]').is_disabled()
+    page.screenshot(path=str(out/'deadline-stop.png'))
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',default='/tmp/mm-browser-evidence')
@@ -249,9 +381,9 @@ def main():
     try:
         with sync_playwright() as playwright:
             for engine in args.browsers:
-                browser=getattr(playwright,engine).launch(headless=True)
+                browser=getattr(playwright,engine).launch(headless=True, **({'executable_path':os.environ['MM_CHROMIUM_PATH']} if engine=='chromium' and os.environ.get('MM_CHROMIUM_PATH') else {}))
                 try:
-                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure)]:
+                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey)]:
                         directory=output/engine/name;directory.mkdir(parents=True,exist_ok=True)
                         context=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
                         context.tracing.start(screenshots=True,snapshots=True,sources=True)

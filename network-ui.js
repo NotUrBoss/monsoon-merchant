@@ -1,7 +1,8 @@
 /* Monsoon Merchant — unified captain, factory, freight and finance workspaces. */
 (function () {
   'use strict';
-  const KEY = 'mm.company.v2';
+  const KEY = 'mm.company.v3';
+  const PREVIOUS_KEY = 'mm.company.v2';
   const LEGACY_KEY = 'mm.network.v1'; // Read-only migration source; never overwrite an old company.
   const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = n => 'RM ' + Math.round(n).toLocaleString('en-US');
@@ -13,14 +14,14 @@
 
   function open(options) {
     if (previousClose) previousClose();
-    const N = window.MMNetwork, app = options.root;
+    const N = window.MMNetwork, A = window.MMCompanyActions, app = options.root;
     const mount = app.querySelector('#screen') || app;
     const ids = Object.keys(N.HUBS), goods = Object.keys(N.GOODS), recipes = Object.keys(N.RECIPES);
     let state = null, saved = null, unreadable = false, saveWarning = '', disposed = false;
     let notice = '', badNotice = false, rendering = false;
-    const ui = { view: 'lobby', tab: 'world', hub: 'klang', good: 'palm', qty: '20', side: 'buy', to: ids.find(id => id !== 'klang'), mode: 'sea', recipe: recipes[0], batches: '1', backup: false, confirm: false, importText: '', sailTo:'singapore', direction:'load', amount:'10000' };
+    const ui = { route:null, report:null, effects:true, foodChain:false, view: 'lobby', tab: 'world', hub: 'klang', good: 'palm', qty: '20', side: 'buy', to: ids.find(id => id !== 'klang'), mode: 'sea', recipe: recipes[0], batches: '1', backup: false, confirm: false, importText: '', sailTo:'singapore', direction:'load', amount:'10000' };
     try {
-      const raw = localStorage.getItem(KEY) || localStorage.getItem(LEGACY_KEY);
+      const raw = localStorage.getItem(KEY) || localStorage.getItem(PREVIOUS_KEY) || localStorage.getItem(LEGACY_KEY);
       if (raw) {
         const loaded = N.deserialize(raw);
         if (loaded.ok) saved = loaded.state;
@@ -43,6 +44,7 @@
     const input = (id, label, value) => '<label class="net-field" for="net-' + id + '"><span>' + label + '</span><input id="net-' + id + '" data-field="' + id + '" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" value="' + esc(value) + '"></label>';
     const fact = (name, value) => '<div><dt>' + name + '</dt><dd>' + value + '</dd></div>';
     const productList = values => Object.entries(values).map(([id, q]) => q + ' t ' + goodName(id)).join(' + ');
+    const Play = window.MMCompanyPlay.create({N,A,money,esc,btn,select,input,productList});
     function normalizeDestination() {
       if (!N.HUBS[ui.to] || ui.to === ui.hub) ui.to = ids.find(id => id !== ui.hub);
     }
@@ -120,21 +122,21 @@
     }
     function log() { return '<details class="net-card net-log"><summary>Company log</summary><ul>' + state.history.map(item => '<li><small>Day ' + item.day + '</small><span>' + esc(item.text) + '</span></li>').join('') + '</ul></details>'; }
     function campaign() {
-      if (!active()) return summary() + operations() + log();
+      if (!active()) return Play.report(state,ui) + summary() + operations() + log();
       const next = nextEvent();
       const hubs = ids.map(id => [id, hubName(id) + ' · ' + N.HUBS[id].region + (state.warehouses[id] ? ' · owned' : '')]);
       const regionNav = '<nav class="net-regions" aria-label="Trading regions">' + [...new Set(ids.map(id => N.HUBS[id].region))].map(region => '<button data-n="region" data-region="' + esc(region) + '"' + (N.HUBS[ui.hub].region === region ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' + esc(region) + '<small>' + plural(ids.filter(id => N.HUBS[id].region === region).length, 'hub') + '</small></button>').join('') + '</nav>';
       return '<div class="net-overview"><div><small>Cash available</small><b>' + money(state.cash) + '</b></div><div><small>Company value</small><b>' + money(N.netWorth(state)) + '</b></div><div><small>Daily upkeep</small><b>' + money(dailyCost()) + '</b></div><div><small>Next completion</small><b>' + (Number.isFinite(next) ? 'Day ' + next : 'No active jobs') + '</b></div></div>' +
         (state.debt ? '<p class="net-warning">Company debt: ' + money(state.debt) + '. Sales and order payments repay this before adding spendable cash. Daily interest is 0.5% while the captain is enabled.</p>' : '') +
-        regionNav + '<div class="net-toolbar">' + select('hub', 'Manage a regional hub', ui.hub, hubs) + '<nav class="net-tabs" aria-label="Company workspaces">' + [['world','Map'],['market','Trade'],['bridge','Captain'],['shipments','Freight'],['industry','Manufacture'],['orders','Orders & Bank']].map(([id, name]) => btn(name, 'tab', ui.tab === id ? 'on' : '', ' data-tab="' + id + '"' + (ui.tab === id ? ' aria-current="page"' : ''))).join('') + '</nav></div>' +
-        objectivePanel() + (ui.tab === 'world' ? window.MMCompanyWorld.port(state,N,ui.hub) : '') +
-        '<div class="net-layout"><div class="net-main-column">' + (ui.tab === 'world' ? window.MMCompanyWorld.world(state,N,ui.hub) : ui.tab === 'market' ? tradePanel() : ui.tab === 'bridge' ? bridgePanel() : ui.tab === 'shipments' ? shipmentPanel() : ui.tab === 'orders' ? ordersPanel() : industryPanel()) + '</div><aside class="net-side-column" aria-label="Warehouse and operations">' + warehouse() + (ui.tab === 'shipments' ? lanesPanel() : '') + operations() + log() + '</aside>' + (ui.tab === 'market' ? '<div class="net-price-column">' + pricesPanel() + '</div>' : '') + '</div>';
+        Play.report(state,ui) + Play.decision(state) + (ui.tab==='world'?Play.briefing(state,ui):ui.tab==='orders'?'':Play.ready(state)) + regionNav + '<div class="net-toolbar">' + select('hub', 'Manage a regional hub', ui.hub, hubs) + '<nav class="net-tabs" aria-label="Company workspaces">' + [['world','Map'],['market','Trade'],['bridge','Captain'],['shipments','Freight'],['industry','Manufacture'],['orders','Orders & Bank']].map(([id, name]) => btn(name, 'tab', ui.tab === id ? 'on' : '', ' data-tab="' + id + '"' + (ui.tab === id ? ' aria-current="page"' : ''))).join('') + '</nav></div>' +
+        objectivePanel() + (ui.tab === 'world' ? window.MMCompanyWorld.port(state,N,ui.hub) : '') + (ui.foodChain?Play.factory(state,ui,'klang',10,true,'food'):'') + Play.route(state,ui) +
+        '<div class="net-layout"><div class="net-main-column">' + (ui.tab === 'world' ? window.MMCompanyWorld.world(state,N,ui.hub) : ui.tab === 'market' ? tradePanel() : ui.tab === 'bridge' ? bridgePanel() : ui.tab === 'shipments' ? shipmentPanel() : ui.tab === 'orders' ? ordersPanel() : industryPanel() + (state.factories[ui.hub]?Play.factory(state,ui,ui.hub,whole(ui.batches)):'')) + '</div><aside class="net-side-column" aria-label="Warehouse and operations">' + warehouse() + (ui.tab === 'shipments' ? lanesPanel() : '') + operations() + log() + '</aside>' + (ui.tab === 'market' ? '<div class="net-price-column">' + pricesPanel() + '</div>' : '') + '</div>';
     }
 
     function nextEvent(){return Math.min(...state.shipments.map(j=>j.arrivalDay),...state.production.map(j=>j.finishDay),state.captain?.voyage?.arrivalDay||Infinity);}
     function objectivePanel(){
       const objectives=N.objectives(state),next=objectives.find(o=>!o.done),completed=objectives.filter(o=>o.done).length;
-      return '<section class="net-guidance company-objectives" aria-label="Campaign objectives"><div class="net-card-head"><b>Your trading company · '+completed+'/5 milestones</b><span class="net-badge">'+(next?'Next objective':'Supply chain established')+'</span></div><div class="objective-track">'+objectives.map(o=>'<button data-n="objective" data-objective="'+o.id+'" class="'+(o.done?'done':o.id===next?.id?'current':'')+'">'+(o.done?'✓ ':'○ ')+esc(o.name)+'</button>').join('')+'</div><p>'+esc(next?next.hint:'Keep growing your network, finish outstanding orders and protect your net worth through day 60.')+'</p></section>';
+      return '<details class="net-guidance company-objectives" aria-label="Campaign objectives"><summary class="net-card-head"><b>Your trading company · '+completed+'/5 milestones</b><span class="net-badge">'+(next?'Next objective':'Supply chain established')+'</span></summary><div class="objective-track">'+objectives.map(o=>'<button data-n="objective" data-objective="'+o.id+'" class="'+(o.done?'done':o.id===next?.id?'current':'')+'">'+(o.done?'✓ ':'○ ')+esc(o.name)+'</button>').join('')+'</div><p>'+esc(next?next.hint:'Keep growing your network, finish outstanding orders and protect your net worth through day 60.')+'</p></details>';
     }
     function bridgePanel(){
       const c=state.captain;
@@ -153,7 +155,7 @@
     }
     function ordersPanel(){
       const c=state.captain;if(!c)return bridgePanel();
-      const orders=Object.entries(N.ORDERS).map(([id,o])=>{const q=N.quoteOrder(state,id),status=c.orders[id];return '<article class="company-order"><div class="net-card-head"><h3>'+esc(o.name)+'</h3><span class="net-badge">'+esc(status)+'</span></div><p>'+o.qty+' t '+esc(goodName(o.good))+' → '+esc(hubName(o.hub))+'</p><dl class="facts">'+fact('Payment',money(o.payment))+fact('Delivery deadline','Day '+o.deadline)+'</dl>'+(status==='open'?'<p class="net-note">'+(q.ok?'Warehouse cargo is ready. Payment consumes it once.':esc(q.error))+'</p>'+btn('Fulfil order','fulfill-order','primary',' data-order="'+id+'"'+(q.ok?'':' disabled'))+btn('Manage delivery hub','order-hub','ghost',' data-order="'+id+'"'):'')+'</article>';}).join('');
+      const orders=Object.keys(N.ORDERS).map(id=>{const o=N.orderTerms(state,id);const q=N.quoteOrder(state,id),status=c.orders[id];return '<article class="company-order"><div class="net-card-head"><h3>'+esc(o.name)+'</h3><span class="net-badge">'+esc(status)+'</span></div><p>'+o.qty+' t '+esc(goodName(o.good))+' → '+esc(hubName(o.hub))+'</p><dl class="facts">'+fact('Payment',money(o.payment))+fact('Delivery deadline','Day '+o.deadline)+'</dl>'+(status==='open'?'<p class="net-note">'+(q.ok?'Warehouse cargo is ready. Payment consumes it once.':esc(q.error))+'</p>'+btn('Fulfil order','fulfill-order','primary',' data-order="'+id+'"'+(q.ok?'':' disabled'))+btn('Manage delivery hub','order-hub','ghost',' data-order="'+id+'"'):'')+'</article>';}).join('');
       const amount=whole(ui.amount),canBorrow=Number.isSafeInteger(amount)&&amount>0&&amount+state.debt<=N.CREDIT_LIMIT,canRepay=Number.isSafeInteger(amount)&&amount>0&&amount<=state.debt&&amount<=state.cash;
       return '<section class="net-card"><h2>Delivery orders</h2><p class="net-note">Deliver into the named warehouse, then fulfil the order. Its payment replaces a market sale, not an extra payout. Orders expire without penalty; deadline-day arrivals can fulfil an order before advancing again.</p>'+orders+'</section><section class="net-card"><h2>Company finance</h2><dl class="facts">'+fact('Outstanding debt',money(state.debt))+fact('Shared credit limit',money(N.CREDIT_LIMIT))+fact('Daily interest',money(Math.ceil(state.debt*0.005)))+'</dl><p class="net-warning">Loans are game money. Interest is 0.5% per game day. Upkeep shortfalls also become debt. Sales and order payments repay debt automatically before increasing spendable cash.</p>'+input('amount','Loan or repayment (whole RM)',ui.amount)+btn('Borrow','borrow','',canBorrow?'':' disabled')+btn('Repay','repay','',canRepay?'':' disabled')+'</section>';
     }
@@ -172,7 +174,7 @@
       const selection = focusId && current.matches('input,textarea') ? [current.selectionStart, current.selectionEnd] : null;
       const bookmark = keepFocus && current?.dataset?.n ? Object.assign({}, current.dataset) : null;
       const scrolled = mount.querySelector('.net-scroll')?.scrollTop || 0;
-      mount.innerHTML = '<div class="network-screen"><header class="net-header">' + btn('← Main menu', 'exit', 'ghost') + '<div><b>Monsoon Company</b><small>' + (state && ui.view === 'campaign' ? 'Day ' + state.day + ' / 60' : 'Captain · Factory · Freight') + '</small></div>' + btn('Backup', 'backup', 'ghost') + '</header><main class="net-scroll">' + (saveWarning ? '<p class="net-warning" role="alert">' + esc(saveWarning) + '</p>' : '') + '<div class="net-notice ' + (badNotice ? 'net-warning' : '') + '" role="status" aria-live="polite">' + esc(notice) + '</div>' + (ui.view === 'lobby' ? lobby() : campaign()) + backupPanel() + '</main>' + (active() && ui.view === 'campaign' ? '<footer class="net-daybar"><p>Advance <b>captain, freight and factories</b> by one day.<span>Charges ' + money(dailyCost()) + ' upkeep and interest across your company.</span></p>' + btn('Advance to day ' + (state.day + 1), 'advance', 'primary') + '</footer>' : '') + '</div>';
+      mount.innerHTML = '<div class="network-screen'+(ui.effects?'':' no-effects')+'"><header class="net-header">' + btn('← Main menu', 'exit', 'ghost') + '<div><b>Monsoon Company</b><small>' + (state && ui.view === 'campaign' ? 'Day ' + state.day + ' / 60' : 'Captain · Factory · Freight') + '</small></div>' + btn(ui.effects?'Effects on':'Effects off','effects','ghost',' aria-pressed="'+ui.effects+'"') + btn('Backup', 'backup', 'ghost') + '</header><main class="net-scroll">' + (saveWarning ? '<p class="net-warning" role="alert">' + esc(saveWarning) + '</p>' : '') + '<div class="net-notice ' + (badNotice ? 'net-warning' : '') + '" role="status" aria-live="polite">' + esc(notice) + '</div>' + (ui.view === 'lobby' ? lobby() : campaign()) + backupPanel() + '</main>' + (active() && ui.view === 'campaign' ? Play.daybar(state,ui) : '') + '</div>';
       const sc = mount.querySelector('.net-scroll');
       if (keepFocus) sc.scrollTop = scrolled;
       let next = focusId ? document.getElementById(focusId) : null;
@@ -186,9 +188,25 @@
       } finally { rendering = false; }
     }
     function close() { mount.removeEventListener('keydown', keyboard); disposed = true; mount.removeEventListener('click', click); mount.removeEventListener('change', change); mount.removeEventListener('input', typing); app.classList.remove('network-mode'); previousClose = null; }
+
+    function openRoute(orderId=null,from=null){
+      const o=orderId?N.orderTerms(state,orderId):null;
+      const origin=from||ui.hub;
+      ui.route={from:state.warehouses[origin]?origin:state.home,to:o?o.hub:(ui.to===origin?'singapore':ui.to),good:o?o.good:ui.good,qty:String(o?o.qty:whole(ui.qty)||20),buyMissing:!!o,buildDestination:!!o,orderId};
+      if(ui.route.from===ui.route.to)ui.route.from=Object.keys(state.warehouses).find(id=>id!==ui.route.to)||state.home;
+      ui.tab='world';ui.foodChain=false;message('Review the complete cost, then confirm one transport option.');render();
+      mount.querySelector('.route-planner')?.scrollIntoView({block:'start'});
+    }
+    function reportAdvance(result,fromDay){
+      if(result.ok)ui.report={fromDay,toDay:state.day,upkeep:result.upkeep,events:(result.events||[]).map(e=>typeof e==='string'?{day:state.day,text:e}:e),message:result.message||'One shared company day completed.'};
+      apply(result,result.message);
+    }
     function click(event) {
       const el = event.target.closest('[data-n]'); if (!el || el.disabled || !mount.contains(el)) return;
       const action = el.dataset.n;
+      if(event.detail>1)return; // Ignore the second activation of a physical double-click.
+      if(action==='report-close'){ui.report=null;render(true);return;}
+      if(action==='effects'){ui.effects=!ui.effects;render(true);return;}
       if (action === 'exit') { if (state && !save()) { render(true); return; } close(); options.onExit(); return; }
       if (action === 'backup') { ui.backup = !ui.backup; render(true); if (ui.backup) mount.querySelector('.net-backup')?.scrollIntoView({ block: 'start' }); return; }
       if (action === 'copy') {
@@ -202,7 +220,7 @@
         if (!loaded.ok) { message('Backup was not restored: ' + loaded.error, true); render(true); return; }
         try { localStorage.setItem(KEY, N.serialize(loaded.state)); }
         catch (error) { message('Restore could not be saved. Your existing company is unchanged.', true); render(true); return; }
-        state = loaded.state; saved = state; unreadable = false; saveWarning = ''; ui.hub = state.home; ui.view = 'campaign'; ui.backup = false; if(!state.captain && state.status==='active')N.enableCaptain(state); save(); message('Company restored.'); render(); return;
+        ui.route=null;ui.report=null;ui.foodChain=false;state = loaded.state; saved = state; unreadable = false; saveWarning = ''; ui.hub = state.home; ui.view = 'campaign'; ui.backup = false; if(!state.captain && state.status==='active')N.enableCaptain(state); save(); message('Company restored.'); render(); return;
       }
       if (action === 'new') { if (saved || unreadable) { ui.confirm = true; render(true); } else start(); return; }
       if (action === 'start') { start(); return; }
@@ -210,7 +228,29 @@
       if (action === 'continue') { state = saved; ui.hub = state.home; ui.view = 'campaign'; if(!state.captain && state.status==='active'){const upgraded=N.enableCaptain(state);if(!upgraded.ok){message(upgraded.error,true);render();return;}} save(); message('Company resumed. All workspaces share this save.'); render(); return; }
       if (action === 'lobby') { ui.view = 'lobby'; ui.confirm = false; render(); return; }
       if (!active()) return;
-      if(action==='world-hub'){ui.hub=el.dataset.hub;ui.tab='market';message('Managing '+hubName(ui.hub)+'.');render();return;}
+      if(action==='port-action'){ui.route=null;ui.foodChain=false;ui.tab=el.dataset.tab;if(ui.tab==='bridge'&&state.captain)ui.hub=state.captain.port;render();return;}
+      if(action==='route-open'){openRoute();return;}
+      if(action==='plan-order'){openRoute(el.dataset.order,el.dataset.from||'klang');return;}
+      if(action==='route-cancel'){ui.route=null;message('Plan cancelled. No money or cargo moved.');render(true);return;}
+      if(action==='route-buy'||action==='route-build'){if(ui.route){const key=action==='route-buy'?'buyMissing':'buildDestination';ui.route[key]=!ui.route[key];render(true);}return;}
+      if(action==='route-confirm'){
+        if(!ui.route)return;const q=ui.routeQuotes?.[el.dataset.mode];
+        if(!q?.ok||q.late)return;
+        const result=A.deliver(state,{...ui.route,qty:whole(ui.route.qty),mode:el.dataset.mode},q.snapshot);
+        if(result.ok)ui.route=null;apply(result,'Delivery committed once. Use Next event to reach the next completion.');return;
+      }
+      if(action==='food-chain'){ui.foodChain=true;ui.tab='world';ui.route=null;render();mount.querySelector('.smart-factory')?.scrollIntoView({block:'start'});return;}
+      if(action==='smart-produce'){
+        const q=ui.factoryQuote,p=ui.factoryArgs;if(!q?.ok)return;
+        const result=A.produce(state,p.hub,p.batches,p.build,p.recipe,q.snapshot);
+        if(result.ok){ui.foodChain=false;ui.tab='world';}apply(result,'Inputs sourced and production started as one transaction.');return;
+      }
+      if(action==='customer-choice'){apply(N.chooseCustomer(state,el.dataset.choice),'Customer agreement saved. Payment is earned only on fulfilment.');return;}
+      if(action==='advance-next'){
+        const q=ui.advanceQuote;if(!q?.ok)return;const day=state.day;
+        reportAdvance(A.advanceNext(state,q.snapshot),day);return;
+      }
+      if(action==='world-hub'){if(ui.route){if(el.dataset.hub===ui.route.from){message('Choose a different destination.',true);render(true);return;}ui.route.to=el.dataset.hub;ui.route.orderId=null;message('Destination updated. No cargo moved.');render(true);mount.querySelector('.route-planner')?.scrollIntoView({block:'start'});}else{ui.hub=el.dataset.hub;ui.tab='market';message('Managing '+hubName(ui.hub)+'.');render();}return;}
       if(action==='objective'){const objective=N.objectives(state).find(o=>o.id===el.dataset.objective);if(objective){ui.tab=objective.tab;ui.hub=objective.hub;message(objective.hint);render();}return;}
       if(action==='captain-destination'){ui.hub=state.captain.voyage.to;ui.tab='market';render();return;}
       if(action==='order-hub'){ui.hub=N.ORDERS[el.dataset.order].hub;ui.tab='market';render();return;}
@@ -228,7 +268,7 @@
         normalizeDestination();
         message('Managing ' + hubName(ui.hub) + ' in ' + N.HUBS[ui.hub].region + '.'); render(true); return;
       }
-      if (action === 'tab') { ui.tab = el.dataset.tab; message(''); render(); return; }
+      if (action === 'tab') { ui.route=null;ui.foodChain=false;ui.tab = el.dataset.tab; message(''); render(); return; }
       if (action === 'product') { ui.good = el.dataset.good; render(true); mount.querySelector('#net-good')?.focus(); return; }
       if (action === 'trade') apply(N.trade(state, ui.hub, ui.good, whole(ui.qty), ui.side), (ui.side === 'buy' ? 'Bought ' : 'Sold ') + ui.qty + ' t ' + goodName(ui.good) + ' in ' + hubName(ui.hub) + '.');
       else if (action === 'dispatch') apply(N.dispatch(state, ui.hub, ui.to, ui.mode, ui.good, whole(ui.qty)), 'Shipment dispatched. Advance days to move it toward ' + hubName(ui.to) + '.');
@@ -237,25 +277,32 @@
       else if (action === 'upgrade-lanes') apply(N.upgradeLanes(state), 'Your company now has 6 concurrent freight slots.');
       else if (action === 'build-factory') apply(N.buildFactory(state, ui.hub, ui.recipe), 'Factory built. Buy the required inputs locally or ship them here.');
       else if (action === 'produce') apply(N.startProduction(state, ui.hub, state.factories[ui.hub].recipeId, whole(ui.batches)), 'Production started. Advance days to finish the batch.');
-      else if (action === 'advance') apply(N.advanceDay(state));
+      else if (action === 'advance') {const day=state.day;reportAdvance(N.advanceDay(state),day);}
     }
     function start() {
-      state = N.create('company-' + Date.now(), true); saved = state; ui.hub = state.home; ui.view = 'campaign'; ui.confirm = false; ui.tab = 'world';
+      ui.route=null;ui.report=null;ui.foodChain=false;state = N.create('company-' + Date.now(), true); saved = state; ui.hub = state.home; ui.view = 'campaign'; ui.confirm = false; ui.tab = 'world';
       message('Your company is open. Follow the first delivery objective or explore the map.'); save(); render();
     }
     function change(event) {
       const field = event.target.dataset.field;
       // Replacing a focused form can synchronously dispatch change/blur in Chromium.
-      if (rendering || !field || ui[field] === event.target.value) return;
+      if(rendering||!field)return;
+      if(field.startsWith('route')&&ui.route){
+        const key={routeFrom:'from',routeTo:'to',routeGood:'good',routeQty:'qty'}[field];if(!key||ui.route[key]===event.target.value)return;
+        ui.route[key]=event.target.value;ui.route.orderId=null;
+        if(ui.route.from===ui.route.to)ui.route.to=ids.find(id=>id!==ui.route.from);
+        render(true);return;
+      }
+      if(ui[field]===event.target.value)return;
       ui[field] = event.target.value;
       if (field === 'hub') normalizeDestination();
       message(''); render(true);
     }
     function typing(event) {
       if (event.target.id === 'net-import') ui.importText = event.target.value;
-      if (['qty', 'batches', 'amount'].includes(event.target.dataset.field)) change(event);
+      if (['qty', 'batches', 'amount', 'routeQty'].includes(event.target.dataset.field)) change(event);
     }
-    function keyboard(event){const hub=event.target.closest('svg [data-n="world-hub"]');if(hub&&['Enter',' '].includes(event.key)){event.preventDefault();click({target:hub});}}
+    function keyboard(event){const hub=event.target.closest('svg [data-n]');if(hub&&['Enter',' '].includes(event.key)){event.preventDefault();click({target:hub});}}
     mount.addEventListener('keydown',keyboard);
     mount.addEventListener('click', click); mount.addEventListener('change', change); mount.addEventListener('input', typing);
     previousClose = close;

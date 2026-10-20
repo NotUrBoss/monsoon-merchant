@@ -25,7 +25,7 @@ test('unified warehouse upgrades support a full largest-ship delivery and preser
 test('legacy warehouse caps remain unchanged until the captain is enabled',()=>{
   const s=N.create('old-caps');ok(N.upgradeWarehouse(s,'klang'));ok(N.upgradeWarehouse(s,'klang'));
   assert.equal(N.warehouseMaxLevel(s),3);assert.equal(N.upgradeWarehouse(s,'klang').ok,false);
-  const old=JSON.parse(N.serialize(s));delete old.captain;old.version=1;
+  const old=JSON.parse(N.serialize(s));delete old.captain;delete old.customer;old.version=1;
   old.warehouses.klang.level=4;old.warehouses.klang.capacity=520;
   assert.equal(N.deserialize(JSON.stringify(old)).ok,false);
   ok(N.enableCaptain(s));ok(N.upgradeWarehouse(s,'klang'));assert.equal(s.warehouses.klang.capacity,520);ok(N.validate(s));
