@@ -32,13 +32,15 @@ test('service worker precaches every app asset and serves cached navigation offl
   let pending;
   handlers.install({waitUntil(p) {pending = p;}});
   await pending;
-  assert.equal(cached.size, 15);
+  assert.equal(cached.size, 17);
   assert.ok(cached.has('./logistics.js'));
   assert.ok(cached.has('./network-ui.js'));
+  assert.ok(cached.has('./company-actions.js'));
+  assert.ok(cached.has('./company-play.js'));
   handlers.activate({waitUntil(p) {pending = p;}});
   await pending;
   assert.equal(claimed, true);
-  assert.deepEqual(deleted, ['mm-1.0.1','mm-1.1.0']);
+  assert.deepEqual(deleted, ['mm-1.0.1','mm-1.1.0','mm-1.2.0']);
   handlers.fetch({request: {url: 'https://example.test/monsoon-merchant/', method: 'GET', mode: 'navigate'},
     respondWith(p) {pending = p;}});
   assert.match((await pending).toString(), /Monsoon Merchant/);

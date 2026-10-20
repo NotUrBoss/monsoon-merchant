@@ -1,7 +1,7 @@
 /* Monsoon Merchant — one company ledger for captains, manufacturing and logistics. */
 (function (root) {
   'use strict';
-  const VERSION = 2;
+  const VERSION = 3;
   const SEASON_DAYS = 60;
   const INITIAL_CASH = 500000;
   const COSTS = Object.freeze({ warehouse:70000, warehouseUpgrade:45000, factory:90000, laneUpgrade:55000, warehouseUpkeep:220, factoryUpkeep:300 });
@@ -79,7 +79,7 @@
   function create(seed='network', withCaptain=false) {
     seed=String(seed).slice(0,100) || 'network';
     const s={version:VERSION,seed,day:1,status:'active',cash:INITIAL_CASH,debt:0,home:'klang',laneLimit:3,nextId:1,
-      warehouses:{klang:{level:1,capacity:160,stock:inventory()}},factories:{},shipments:[],production:[],market:{},history:[],stats:{trades:0,shipments:0,produced:0,upkeep:0},result:null,captain:withCaptain?newCaptain():null};
+      warehouses:{klang:{level:1,capacity:160,stock:inventory()}},factories:{},shipments:[],production:[],market:{},history:[],stats:{trades:0,shipments:0,produced:0,upkeep:0},result:null,captain:withCaptain?newCaptain():null,customer:{choice:'pending',decidedDay:0}};
     resetMarket(s); log(s,'Company founded in Port Klang. Source cargo, manufacture, then deliver by your own ship or chartered freight.'); return s;
   }
   function prices(s,hub) {
@@ -230,7 +230,7 @@
       events.push(`Captain arrived in ${HUBS[v.to].name}. ${tonnes} t unloaded; hull ${captain.hull}%.`);
     }
     if(captain)for(const [id,order]of Object.entries(ORDERS)){
-      if(captain.orders[id]==='open'&&s.day>order.deadline){captain.orders[id]='expired';events.push(`${order.name} expired; no penalty.`);}
+      if(captain.orders[id]==='open'&&s.day>orderTerms(s,id).deadline){captain.orders[id]='expired';events.push(`${order.name} expired; no penalty.`);}
     }
     const arriving=s.shipments.filter(j=>j.arrivalDay<=s.day);s.shipments=s.shipments.filter(j=>j.arrivalDay>s.day);
     for(const j of arriving){s.warehouses[j.to].stock[j.good]+=j.qty;s.stats.shipments++;events.push(`${j.qty} t ${GOODS[j.good].name} arrived in ${HUBS[j.to].name}.`);}
@@ -245,8 +245,9 @@
   function validate(s,legacy=false) {
     try {
       const top=['version','seed','day','status','cash','debt','home','laneLimit','nextId','warehouses','factories','shipments','production','market','history','stats','result'];
-      if(!legacy)top.push('captain');
-      if(!keysOnly(s,top)||Object.keys(s).length!==top.length||s.version!==(legacy?1:VERSION))return fail('Unsupported or malformed company save version.');
+      if(legacy!==true)top.push('captain');
+      if(!legacy)top.push('customer');
+      if(!keysOnly(s,top)||Object.keys(s).length!==top.length||s.version!==(legacy===true?1:legacy===2?2:VERSION))return fail('Unsupported or malformed company save version.');
       if(typeof s.seed!=='string'||s.seed.length<1||s.seed.length>100||!whole(s.day,1,60)||!['active','finished'].includes(s.status)||((s.status==='finished')!==(s.day===60)))return fail('Invalid company calendar.');
       if(!whole(s.cash)||!whole(s.debt)||s.home!=='klang'||![3,6].includes(s.laneLimit)||!whole(s.nextId,1,1e9))return fail('Invalid company finances or dispatch office.');
       if(!record(s.warehouses)||!own(s.warehouses,'klang')||Object.keys(s.warehouses).some(h=>!own(HUBS,h)))return fail('Invalid warehouse network.');
@@ -270,7 +271,11 @@
         factories.add(j.hub);const r=RECIPES[j.recipeId];
         if(j.cost!==r.cost*j.batches||j.finishDay!==j.startDay+r.days+Math.floor((j.batches-1)/10)||!keysOnly(j.output,Object.keys(r.output))||Object.keys(j.output).length!==Object.keys(r.output).length||Object.entries(r.output).some(([g,n])=>j.output[g]!==n*j.batches))return fail('Invalid production inputs, output or timing.');
       }
-      if(!legacy){const cv=validateCaptain(s);if(!cv.ok)return cv;}
+      if(!legacy){
+        const c=s.customer;
+        if(!keysOnly(c,['choice','decidedDay'])||Object.keys(c).length!==2||!['pending','priority','extension','standard'].includes(c.choice)||!whole(c.decidedDay,0,s.day)||((c.choice==='pending')!==(c.decidedDay===0))||(c.choice!=='pending'&&(!s.captain||c.decidedDay<8||c.decidedDay>30))||(c.choice==='priority'&&c.decidedDay>18))return fail('Invalid customer agreement.');
+      }
+      if(legacy!==true){const cv=validateCaptain(s);if(!cv.ok)return cv;}
       for(const hub of Object.keys(s.warehouses))if(warehouseUsage(s,hub).used>s.warehouses[hub].capacity)return fail('Stored and reserved cargo exceeds warehouse capacity.');
       if(!keysOnly(s.stats,['trades','shipments','produced','upkeep'])||Object.keys(s.stats).length!==4||Object.values(s.stats).some(n=>!whole(n)))return fail('Invalid company statistics.');
       if(!Array.isArray(s.history)||s.history.length>40||s.history.some(e=>!keysOnly(e,['day','text'])||!whole(e.day,1,s.day)||typeof e.text!=='string'||e.text.length>300))return fail('Invalid company history.');
@@ -282,7 +287,39 @@
     }catch(_){return fail('Malformed company save.');}
   }
   function serialize(s){const v=validate(s);if(!v.ok)throw new Error(v.error);return JSON.stringify(s);}
-  function deserialize(text){if(typeof text!=='string'||text.length>1000000)return fail('Company backup is too large or is not text.');try{const s=JSON.parse(text);if(s?.version===1){const legacy=validate(s,true);if(!legacy.ok)return legacy;s.version=VERSION;s.captain=null;}const v=validate(s);return v.ok?{ok:true,state:s}:v;}catch(_){return fail('Company backup is not valid JSON.');}}
+  function deserialize(text){
+    if(typeof text!=='string'||text.length>1000000)return fail('Company backup is too large or is not text.');
+    try{
+      const s=JSON.parse(text);
+      if(s?.version===1||s?.version===2){
+        const legacy=validate(s,s.version===1?true:2);if(!legacy.ok)return legacy;
+        if(s.version===1)s.captain=null;
+        s.version=VERSION;s.customer={choice:'pending',decidedDay:0};
+      }
+      const v=validate(s);return v.ok?{ok:true,state:s}:v;
+    }catch(_){return fail('Company backup is not valid JSON.');}
+  }
+
+  // Customer terms are authoritative: UI, expiry, settlement and validation use
+  // this same resolver. A choice changes the contract, never pays a free bonus.
+  function orderTerms(s,id){
+    if(!own(ORDERS,id))return null;
+    const original=ORDERS[id],choice=s.customer?.choice;
+    if(id!=='pantry')return {...original};
+    return {...original,...(choice==='priority'?{deadline:18,payment:130000}:choice==='extension'?{deadline:35,payment:95000}:{})};
+  }
+  function customerOffer(s){
+    return s.status==='active'&&s.captain?.orders.pantry==='open'&&s.customer?.choice==='pending'&&s.day>=8&&s.day<=30;
+  }
+  function chooseCustomer(s,choice){
+    const a=active(s);if(!a.ok)return a;
+    if(!customerOffer(s)||!['priority','extension','standard'].includes(choice))return fail('This customer decision is not available.');
+    if(choice==='priority'&&s.day>18)return fail('The priority delivery deadline has already passed.');
+    s.customer={choice,decidedDay:s.day};
+    const o=orderTerms(s,'pantry');
+    log(s,`Pantry agreement: ${choice}. Deliver ${o.qty} t by day ${o.deadline} for RM ${o.payment}. Payment only on fulfilment.`);
+    return {ok:true,...o};
+  }
 
   /* Captain, contracts and finance commands all use the company cash, stock and clock.
      Each command validates before mutation. Cargo is in exactly one location: a
@@ -363,7 +400,7 @@
   }
   function quoteOrder(s,id){
     const a=active(s);if(!a.ok)return a;if(!s.captain||!own(ORDERS,id))return fail('Choose a valid company order.');
-    const o=ORDERS[id];if(s.captain.orders[id]!=='open'||s.day>o.deadline)return fail('This order is already fulfilled or expired.');
+    const o=orderTerms(s,id);if(s.captain.orders[id]!=='open'||s.day>o.deadline)return fail('This order is already fulfilled or expired.');
     if(!s.warehouses[o.hub]||s.warehouses[o.hub].stock[o.good]<o.qty)return fail(`Deliver ${o.qty} t ${GOODS[o.good].name} into the ${HUBS[o.hub].name} warehouse first.`);
     if(!whole(s.cash+Math.max(0,o.payment-s.debt)))return fail('Company cash would exceed the supported amount.');
     return {ok:true,...o};
@@ -387,7 +424,7 @@
     const fields=['ship','port','hull','cargo','voyage','voyages','transported','insured','orders'];
     if(!keysOnly(c,fields)||Object.keys(c).length!==fields.length||!own(FLEET,c.ship)||!own(s.warehouses,c.port)||!whole(c.hull,0,100)||!whole(c.voyages)||!whole(c.transported)||typeof c.insured!=='boolean')return fail('Invalid captain or ship.');
     if(!keysOnly(c.cargo,Object.keys(GOODS))||Object.keys(c.cargo).length!==Object.keys(GOODS).length||Object.values(c.cargo).some(n=>!whole(n,0,FLEET[c.ship].capacity))||sum(c.cargo)>FLEET[c.ship].capacity)return fail('Invalid captain cargo or hold capacity.');
-    if(!keysOnly(c.orders,Object.keys(ORDERS))||Object.keys(c.orders).length!==Object.keys(ORDERS).length||Object.entries(c.orders).some(([id,status])=>!['open','fulfilled','expired'].includes(status)||(status==='open'&&s.day>ORDERS[id].deadline)||(status==='expired'&&s.day<=ORDERS[id].deadline)))return fail('Invalid company order state.');
+    if(!keysOnly(c.orders,Object.keys(ORDERS))||Object.keys(c.orders).length!==Object.keys(ORDERS).length||Object.entries(c.orders).some(([id,status])=>!['open','fulfilled','expired'].includes(status)||(status==='open'&&s.day>orderTerms(s,id).deadline)||(status==='expired'&&s.day<=orderTerms(s,id).deadline)))return fail('Invalid company order state.');
     if(c.voyage!==null){
       const v=c.voyage,keys=['from','to','departDay','arrivalDay','cost','damage','insured'];
       if(!keysOnly(v,keys)||Object.keys(v).length!==keys.length||v.from!==c.port||!own(s.warehouses,v.to)||v.to===v.from||!whole(v.departDay,1,s.day)||!whole(v.arrivalDay,s.day+1,60)||v.insured!==c.insured||c.hull<20)return fail('Invalid captain voyage.');
@@ -399,6 +436,6 @@
 
   function freeze(o){Object.values(o).forEach(v=>{if(v&&typeof v==='object')freeze(v);});return Object.freeze(o);}
   [HUBS,GOODS,TRANSPORTS,RECIPES,RAIL_LINKS,FLEET,ORDERS].forEach(freeze);
-  const api={warehouseMaxLevel,FLEET,ORDERS,CREDIT_LIMIT,enableCaptain,dailyUpkeep,shipValue,quoteTransfer,transferCargo,quoteVoyage,sail,insure,repairCaptain,upgradeShip,borrow,repay,quoteOrder,fulfillOrder,objectives,VERSION,SEASON_DAYS,INITIAL_CASH,INITIAL_NET_WORTH,COSTS,HUBS,GOODS,TRANSPORTS,RECIPES,RAIL_LINKS,create,prices,warehouseUsage,quoteTrade,trade,quoteShipment,dispatch,buildWarehouse,upgradeWarehouse,upgradeLanes,buildFactory,quoteProduction,startProduction,advanceDay,netWorth,validate,serialize,deserialize};
+  const api={orderTerms,customerOffer,chooseCustomer,warehouseMaxLevel,FLEET,ORDERS,CREDIT_LIMIT,enableCaptain,dailyUpkeep,shipValue,quoteTransfer,transferCargo,quoteVoyage,sail,insure,repairCaptain,upgradeShip,borrow,repay,quoteOrder,fulfillOrder,objectives,VERSION,SEASON_DAYS,INITIAL_CASH,INITIAL_NET_WORTH,COSTS,HUBS,GOODS,TRANSPORTS,RECIPES,RAIL_LINKS,create,prices,warehouseUsage,quoteTrade,trade,quoteShipment,dispatch,buildWarehouse,upgradeWarehouse,upgradeLanes,buildFactory,quoteProduction,startProduction,advanceDay,netWorth,validate,serialize,deserialize};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.MMNetwork=api;
 })(typeof window!=='undefined'?window:globalThis);

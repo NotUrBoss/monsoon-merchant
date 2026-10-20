@@ -75,15 +75,15 @@ test('tampered captain saves reject cargo, orders, clocks, costs and missing fie
 });
 test('old company saves migrate without changing economics, and finished settlements remain intact',()=>{
   for(const finished of [false,true]){
-    const old=N.create('old-company');if(finished)advanceTo(old,60);const oldValue=N.netWorth(old);const original=copy(old);delete original.captain;original.version=1;
+    const old=N.create('old-company');if(finished)advanceTo(old,60);const oldValue=N.netWorth(old);const original=copy(old);delete original.captain;delete original.customer;original.version=1;
     const text=JSON.stringify(original),restored=ok(N.deserialize(text)).state;
-    assert.equal(restored.version,2);assert.equal(restored.captain,null);assert.equal(N.netWorth(restored),oldValue);assert.equal(restored.cash,old.cash);
+    assert.equal(restored.version,3);assert.equal(restored.captain,null);assert.equal(N.netWorth(restored),oldValue);assert.equal(restored.cash,old.cash);
     if(!finished){ok(N.enableCaptain(restored));assert.equal(N.netWorth(restored),oldValue);}else assert.deepEqual(restored.result,old.result);
     assert.equal(text,JSON.stringify(original),'migration must not alter the source input');
   }
 });
 test('malformed legacy saves are rejected before upgrading',()=>{
-  const old=N.create();delete old.captain;old.version=1;old.cash=-1;assert.equal(N.deserialize(JSON.stringify(old)).ok,false);
+  const old=N.create();delete old.captain;delete old.customer;old.version=1;old.cash=-1;assert.equal(N.deserialize(JSON.stringify(old)).ok,false);
   old.cash=500000;old.magic=true;assert.equal(N.deserialize(JSON.stringify(old)).ok,false);
 });
 test('orders can use chartered or captain cargo, consume stock once and pay debt first',()=>{

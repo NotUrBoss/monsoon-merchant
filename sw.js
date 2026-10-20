@@ -1,6 +1,6 @@
 /* Monsoon Merchant service worker: caches the whole game so it runs with no connection. */
-const CACHE = 'mm-1.2.0';
-const ASSETS = ['./', './index.html', './style.css', './engine.js', './map.js', './logistics.js', './network-ui.js', './company-world.js', './company.css', './ui.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
+const CACHE = 'mm-1.3.0';
+const ASSETS = ['./', './index.html', './style.css', './engine.js', './map.js', './logistics.js', './network-ui.js', './company-actions.js', './company-play.js', './company-world.js', './company.css', './ui.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
