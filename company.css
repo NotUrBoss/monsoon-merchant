@@ -48,3 +48,11 @@
 .net-main-column .btn { white-space: normal; }
 @media(max-width:760px) { .company-port svg { height: auto; } .port-caption { flex-direction: column; gap: 4px; } .company-objectives .net-card-head { align-items: flex-start; flex-direction: column; } .net-tabs .btn { font-size: 12px; padding: 8px; } }
 @media(prefers-reduced-motion:reduce) { .port-smoke, .port-ripples, .world-route path { animation: none; } }
+
+/* Navigation stays above decorative scenery; mobile shows the next useful objective. */
+.net-tabs { order: -1; }
+@media(max-width:760px) {
+  .net-regions { display:none; }
+  .objective-track button:not(.current) { display:none; }
+  .company-port svg { max-height:150px; }
+}
