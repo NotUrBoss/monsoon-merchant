@@ -1,0 +1,58 @@
+/* Unified campaign: clear workspaces, state-driven ports and accessible route map. */
+.company-entry { border-color: var(--teal); background: linear-gradient(120deg, #164448, #19354a); }
+.company-entry .dc-m b { color: #e3f4e8; }
+.company-objectives { margin-block: 12px 18px; }
+.objective-track { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.objective-track button { border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; color: var(--muted); min-height: 42px; text-align: left; font-size: 12px; }
+.objective-track .done { border-color: #528d76; color: #b1dbc2; background: #163e3c; }
+.company-port { margin-bottom: 18px; overflow: hidden; border: 1px solid var(--line2); border-radius: 14px; background: #214959; }
+.company-port svg { display: block; width: 100%; height: 185px; }
+.port-caption { display: flex; justify-content: space-between; gap: 10px; background: #102c3b; padding: 10px 15px; color: #b5cac7; font-size: 12px; }
+.port-smoke { fill: #bac5b5; opacity: .32; animation: port-breathe 4s ease-in-out infinite; transform-origin: 545px 80px; }
+.port-ripples { animation: port-drift 5s ease-in-out infinite alternate; }
+@keyframes port-breathe { 50% { opacity: .15; transform: translateY(-5px); } }
+@keyframes port-drift { to { transform: translateX(9px); opacity: .15; } }
+.net-tabs { flex-wrap: wrap; }
+.net-tabs .btn { min-height: 44px; }
+.net-toolbar { align-items: stretch; flex-direction: column; gap: 8px; }
+.net-toolbar .net-field { max-width: none; }
+.net-tabs .btn { flex: 1 1 85px; }
+.company-world svg { width: 100%; display: block; }
+.net-layout:has(.company-world) .net-main-column { grid-column: 1/-1; }
+.net-layout:has(.company-world) .net-side-column { grid-column: 1/-1; grid-row: 2; }
+.world-land { fill: #254944; stroke: #537062; stroke-width: 1.3; }
+.world-rail { stroke: #91a98e; stroke-width: 2; fill: none; stroke-dasharray: 3 3; }
+.world-ocean { fill: #466e80; font-size: 13px; letter-spacing: 3px; }
+.world-caption { fill: #829da9; font-size: 10px; letter-spacing: 1px; }
+.world-hub { cursor: pointer; }
+.world-hit { fill: transparent; }
+.world-node { fill: #294456; stroke: #c1d3c8; stroke-width: 2; }
+.world-hub.owned .world-node { fill: #6ab5a3; }
+.world-hub.selected .world-node { fill: #e6c17a; stroke: #ffe3a4; }
+.world-hub text { fill: #d3e2d8; font: 12px system-ui,sans-serif; paint-order: stroke; stroke: #081d2c; stroke-width: 3; stroke-linejoin: round; }
+.world-hub:focus-visible { outline: none; }
+.world-hub:focus-visible .world-hit { fill: #d6b56633; stroke: #ffe3a4; stroke-width: 2; }
+.world-captain { fill: none; stroke: #e9be73; stroke-width: 2; }
+.world-route { stroke: #8cbdd0; fill: #8cbdd0; }
+.world-route path { fill: none; stroke-width: 2; stroke-dasharray: 5 5; animation: route-flow 12s linear infinite; }
+.route-captain { stroke: #e9be73; fill: #e9be73; }
+.route-air { stroke: #d4b1cf; fill: #d4b1cf; }
+.route-rail { stroke: #b8cc9e; fill: #b8cc9e; }
+@keyframes route-flow { to { stroke-dashoffset: -80; } }
+.world-legend { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 12px; color: #bfd0ca; font-size: 12px; }
+.company-divider { border: 0; border-top: 1px solid var(--line2); margin: 22px 0 18px; }
+.company-order { border-top: 1px solid var(--line); padding: 16px 0; }
+.company-order h3 { font-size: 15px; }
+.company-order > p { font-size: 13px; color: var(--muted); margin: 8px 0; }
+.company-order .btn { margin-top: 6px; margin-right: 5px; }
+.net-main-column .btn { white-space: normal; }
+@media(max-width:760px) { .company-port svg { height: auto; } .port-caption { flex-direction: column; gap: 4px; } .company-objectives .net-card-head { align-items: flex-start; flex-direction: column; } .net-tabs .btn { font-size: 12px; padding: 8px; } }
+@media(prefers-reduced-motion:reduce) { .port-smoke, .port-ripples, .world-route path { animation: none; } }
+
+/* Navigation stays above decorative scenery; mobile shows the next useful objective. */
+.net-tabs { order: -1; }
+@media(max-width:760px) {
+  .net-regions { display:none; }
+  .objective-track button:not(.current) { display:none; }
+  .company-port svg { max-height:150px; }
+}

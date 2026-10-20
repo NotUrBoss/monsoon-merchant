@@ -119,7 +119,7 @@ test('active save roundtrips preserve ongoing reservations and all job clocks',(
 });
 
 test('malformed saves reject non-finite, unknown, overflowing and inconsistent game state',()=>{
-  const changes=[s=>{s.version=2;},s=>{s.cash=-1;},s=>{s.cash=null;},s=>{s.debt='0';},s=>{s.day=60;},s=>{s.warehouses.klang.stock.rice=161;},s=>{s.warehouses.klang.capacity=999;},s=>{s.warehouses.klang.stock.rice=1.5;},s=>{s.market.klang.rice=-1;},s=>{s.market.unknown={};},s=>{s.warehouses.invalid=s.warehouses.klang;},s=>{s.factories.klang={recipeId:'magic'};},s=>{s.stats.trades=NaN;},s=>{s.laneLimit=100;},s=>{s.result={netWorth:999999};},s=>{s.unexpected=true;}];
+  const changes=[s=>{s.version=N.VERSION+1;},s=>{s.cash=-1;},s=>{s.cash=null;},s=>{s.debt='0';},s=>{s.day=60;},s=>{s.warehouses.klang.stock.rice=161;},s=>{s.warehouses.klang.capacity=999;},s=>{s.warehouses.klang.stock.rice=1.5;},s=>{s.market.klang.rice=-1;},s=>{s.market.unknown={};},s=>{s.warehouses.invalid=s.warehouses.klang;},s=>{s.factories.klang={recipeId:'magic'};},s=>{s.stats.trades=NaN;},s=>{s.laneLimit=100;},s=>{s.result={netWorth:999999};},s=>{s.unexpected=true;}];
   for(const change of changes){const s=fresh();change(s);assert.equal(N.deserialize(JSON.stringify(s)).ok,false);}
   assert.equal(N.deserialize('{bad').ok,false);assert.equal(N.deserialize('x'.repeat(1000001)).ok,false);
   assert.equal(N.deserialize('{"__proto__":{"polluted":true}}').ok,false);assert.equal({}.polluted,undefined);

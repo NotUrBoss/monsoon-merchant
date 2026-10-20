@@ -1,65 +1,61 @@
 # Monsoon Merchant
 
-A strategic trading game with two ways to play: captain a ship on the monsoon seas, or manage a regional supply chain with concurrent sea, air and rail shipments. It is built as an installable web app (PWA): open it once, add it to your home screen, and it plays fully offline after its assets have been cached.
+An installable, offline-capable trading game. **Play Monsoon Company** combines captaining, manufacturing, warehouses, sea/air/rail freight, delivery orders and finance in one 60-day campaign.
 
-## Install on your phone
+## The unified campaign
 
-- **iPhone:** open the game link in Safari, tap **Share**, then **Add to Home Screen**.
-- **Android:** open the link in Chrome, then tap **Install app** (or menu ⋮ → **Add to Home screen**).
+Begin with RM 500,000, a Port Klang warehouse and a starter coaster. Every workspace uses the same money, inventory network, liabilities, calendar and company backup. Changing the selected regional hub manages remote facilities; it does not teleport your captain.
 
-Progress is saved on the device. Classic captain seasons and Daily Voyage use Settings → Backup; Network Company has its own backup controls and save slot.
+**Source → manufacture → store → load or charter → travel → unload → sell or fulfil an order.**
 
-## How it plays
+Manage 14 hubs and 12 products. Run your own captain alongside up to three chartered shipments, expandable to six. Factories transform local inputs into food, textiles, electronics or machinery. All work advances only when you press **Advance day**. Arrival and production space is reserved before departure or job start; stock cannot be sold twice.
 
-### Captain seasons
+The captain's voyage quote shows cost and arrival day. Monsoons change on day 31; ship condition affects passage time. Insurance includes repair of voyage storm damage at arrival. Repair and upgrade your ship through the Captain workspace. Unified warehouses can expand to level 10 / 1,240 t so the largest 1,200 t ship can actually be received.
 
-- 60-day seasons. Turn RM 50,000 and an old coaster into as much as you can.
-- Prices differ by port and move when you trade. You only see live prices where you are.
-- The monsoon turns mid-season, which changes how long each route takes. Storms, pirates, customs and lucky finds happen at sea.
-- Contracts, bank loans, the Ah Long, insurance, shipyards and upgrades.
-- Legacy points carry over between seasons. Spend them to unlock captains, ports, cargo, ships and perks, and climb ten Monsoon difficulty levels.
-- A Daily Voyage with the same seas for everyone each day, plus a streak counter.
+Orders pay once and consume delivered warehouse stock instead of an ordinary market sale. Borrowing and repayment share the company ledger: daily interest is 0.5% of outstanding company debt, and sale/order proceeds repay debt before increasing spendable cash. Check upkeep and delivery dates before spending the reserve. The campaign settles on day 60, including remaining cargo and asset resale values, less liabilities.
 
-### Network Company
+## A first working supply chain
 
-Choose Network Company on the title screen to start a separate 60-day business campaign. Your captain-season progress stays separate.
+Open a Singapore warehouse. At Klang, buy palm oil, then either charter it to Singapore or load your captain's hold and sail. Advance to the quoted arrival day and fulfil the 20 t Straits starter order by day 15.
 
-- Manage 14 hubs across Southeast Asia, East Asia, the Indian Ocean, the Middle East and Australia.
-- Charter sea freight for bulk cargo, air freight for speed, or trains on the listed land corridors. Transport capacity, cost and arrival time differ; rail cannot cross the sea.
-- Run three shipments concurrently and expand to six dispatch slots. One shared day advances every shipment and factory job.
-- Buy and sell twelve products at local hub markets. Build warehouses at additional hubs and upgrade their capacity; inbound cargo and production outputs reserve space.
-- Build specialized factories and turn raw materials into food, textiles, electronics and machinery. Batch capacity, input stocks, production time and overheads constrain output.
-- Keep a cash reserve for daily warehouse/factory upkeep. Check arrival and completion dates before committing capital; the campaign settles on day 60.
+Build a food processor at Klang. Buy 20 t rice and 10 t palm oil, and run 10 batches to produce 30 t packaged food. When complete, deliver the food to Singapore and fulfil its pantry order by day 30. The captain, factory and chartered freight can be working concurrently. The objective tracker guides this progression without granting hidden money or cargo.
 
-Network Company uses transparent, simplified logistics rules designed for a game, including abstracted freight routes. It does not simulate real carrier schedules or tariffs.
+## Saves and existing games
 
-## Files
+Company progress uses `mm.company.v2` in this browser. Its Backup button exports all integrated modules together. Valid old Network Company v1 saves migrate; their original `mm.network.v1` copy remains untouched. Malformed backups are rejected before replacing the current game, and a storage failure exposes an in-memory backup instead of silently discarding play.
 
-Plain HTML, CSS and JavaScript with no build step and no external requests:
+Classic captain seasons, Daily Voyage and Legacy remain available as archived challenges with their original saves. They are not numerically merged into the new company: the old economies, unlocks and scoring differ. Features unique to those challenges, such as Ah Long and the original captain/Legacy unlock tree, remain there. This is a local single-player game, not a cloud-synced or multiplayer economy; use one active game tab per company.
 
-- index.html: app shell
-- engine.js: game rules and economy (also runs in Node)
-- map.js: sea chart
-- logistics.js: independent Network Company rules, accounting and validated saves (also runs in Node)
-- network-ui.js: Network Company interface and separate save/backup controls
-- ui.js: interface, sound and saving
-- style.css: styles
-- sw.js: service worker for offline play
-- manifest.webmanifest and icons: installable app metadata
+## Install and development
 
-To publish an update, change the files, bump CACHE in sw.js, APP_VERSION in ui.js and VERSION in engine.js, then push. Installed copies show an "update ready" banner on the title screen.
+Open the published game once online. On iPhone, use Safari's Share → Add to Home Screen. On Android, use the browser's Install app / Add to Home screen. After the service worker caches the assets, the game can reload offline.
 
-## Review and checks
+The runtime is plain HTML, CSS and JavaScript, with no build step or external runtime requests. For local development, run `python -m http.server 8000` from the repository and open its localhost address.
 
-Run the dependency-free regression suite with a current Node.js release:
+- `logistics.js`: authoritative unified company engine, validation and migration.
+- `network-ui.js`: company workspaces, controls and persistence.
+- `company-world.js` / `company.css`: state-driven schematic map, port environment and responsive presentation.
+- `engine.js`, `ui.js`, `map.js`: preserved classic game; the company reuses its ship catalog.
+- `index.html`, `sw.js`, manifest and icons: app shell and offline assets.
+
+## Tests and release gate
+
+Run the dependency-free engine/regression suite with Node.js 22:
 
 ```sh
 node --test tests/*.test.cjs
 ```
 
-In environments that block child processes, use `node --test --test-isolation=none tests/*.test.cjs`.
-Tests cover progression rewards, save compatibility and validation, backup restoration, seeded seasons, network shipments and production, offline caching, and structured data. Browser journeys and remaining recommendations are recorded in `docs/review.md` and the expansion review documents.
+Run browser acceptance tests with Python 3.12:
 
-The page describes the game with Schema.org `VideoGame` and `WebApplication` JSON-LD. It includes factual free-play metadata and does not fabricate reviews or ratings. Structured data does not guarantee enhanced search results.
+```sh
+python -m pip install -r tests/browser-requirements.txt
+python -m playwright install --with-deps chromium firefox webkit
+python tests/browser_e2e.py --browsers chromium firefox webkit --output /tmp/mm-evidence
+```
 
-Work on a review branch and merge its pull request only when ready to publish: this repository's `main` branch supplies the live GitHub Pages game.
+The browser suite uses actual UI controls against a Pages-style subpath, including a complete 60-day campaign, concurrent production and deliveries, backup/restore, service-worker offline reload, form validation, responsive layouts, legacy-save migration, and simulated storage failure. It records screenshots and failure traces. It does not access production saves.
+
+See `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
+
+Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version for this integration is 1.2.0; company save schema is v2.

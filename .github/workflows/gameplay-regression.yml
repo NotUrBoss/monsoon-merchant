@@ -1,0 +1,62 @@
+name: Gameplay regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gameplay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run engine and regression tests
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/gameplay-evidence"
+          node --test tests/*.test.cjs | tee "$RUNNER_TEMP/gameplay-evidence/engine-results.txt"
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install -r tests/browser-requirements.txt
+          python -m playwright install --with-deps chromium firefox webkit
+      - name: Run real browser journeys
+        run: python tests/browser_e2e.py --browsers chromium firefox webkit --output "$RUNNER_TEMP/gameplay-evidence"
+      - name: Preserve test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gameplay-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/gameplay-evidence/
+          retention-days: 7
+      - name: Preserve tested review workspace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-workspace-${{ github.sha }}
+          path: |
+            *.js
+            *.html
+            *.css
+            *.png
+            *.webmanifest
+            README.md
+            tests/
+            docs/
+            .github/workflows/gameplay-regression.yml
+          include-hidden-files: true
+          retention-days: 7

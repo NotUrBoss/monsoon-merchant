@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
