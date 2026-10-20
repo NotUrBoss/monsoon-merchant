@@ -1,0 +1,41 @@
+name: Gameplay regression
+
+on:
+  push:
+    branches: [codex/unified-company-gameplay]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gameplay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run dependency-free regression suite
+        run: node --test tests/*.test.cjs
+      - name: Preserve review workspace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-workspace-${{ github.sha }}
+          path: |
+            *.js
+            *.html
+            *.css
+            *.png
+            *.webmanifest
+            README.md
+            tests/
+            docs/
+          retention-days: 7
