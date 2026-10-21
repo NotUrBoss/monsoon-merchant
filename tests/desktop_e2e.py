@@ -109,6 +109,9 @@ def planning_and_keyboard(page,ctx,url,out):
     box=page.locator('[data-action="confirm"]').bounding_box()
     page.mouse.dblclick(box['x']+box['width']/2,box['y']+box['height']/2)
     s=state(page);assert len(s['buildings'])==2;assert s['cash']==410000
+    assert page.locator('#notice').is_visible()
+    nav=page.locator('nav button[data-panel="build"]').bounding_box()
+    assert page.evaluate('([x,y])=>document.elementFromPoint(x,y).closest("button")?.dataset.panel', [nav['x']+nav['width']/2,nav['y']+nav['height']/2])=='build'
     page.locator('svg [data-plot="3"]').focus();page.keyboard.press('Enter')
     assert page.get_by_role('heading',name='Food factory',exact=True).is_visible()
     before=state(page)
@@ -121,8 +124,18 @@ def offline_and_old_saves(page,ctx,url,out):
     root=url.removesuffix('desktop/')
     page.goto(root,wait_until='networkidle')
     page.evaluate('navigator.serviceWorker.ready')
-    sentinel={'mm.company.v3':'original company sentinel','mm.network.v1':'original network sentinel','mm.meta.v1':'original classic sentinel'}
-    page.evaluate('(values)=>Object.entries(values).forEach(([k,v])=>localStorage.setItem(k,v))',sentinel)
+    # Create a genuine existing company using its visible controls. The original
+    # app saves metadata on pagehide: leave it before taking the baseline, rather
+    # than injecting a placeholder that its legitimate unload handler replaces.
+    page.locator('[data-a="network"]').click()
+    page.locator('[data-n="new"]').click()
+    page.locator('[data-n="advance"]').click()
+    original_company=page.evaluate("localStorage.getItem('mm.company.v3')")
+    assert json.loads(original_company)['day'] == 2
+    page.goto(root+'tests/browser-requirements.txt',wait_until='load')
+    original_saves=page.evaluate("() => Object.fromEntries(Object.keys(localStorage).filter(k=>k.startsWith('mm.')).map(k=>[k,localStorage.getItem(k)]))")
+    assert original_saves['mm.company.v3']==original_company
+    assert json.loads(original_saves['mm.meta.v1'])['v']==1
     start(page,url)
     for _ in range(5):click(page,'step')
     before=state(page)
@@ -135,7 +148,16 @@ def offline_and_old_saves(page,ctx,url,out):
     page.wait_for_selector('[data-action="step"]')
     assert state(page)==before
     click(page,'step');assert state(page)['day']==before['day']+1
-    for key,value in sentinel.items():assert page.evaluate('(k)=>localStorage.getItem(k)',key)==value
+    district_after=state(page)
+    for key,value in original_saves.items():
+        assert page.evaluate('(k)=>localStorage.getItem(k)',key)==value, f'Original save changed: {key}'
+    # The older game must still open its real save offline after using the child
+    # service worker; returning to it must not change the district save either.
+    page.goto(root,wait_until='load')
+    page.locator('[data-a="network"]').click()
+    page.locator('[data-n="continue"]').click()
+    assert page.evaluate("localStorage.getItem('mm.company.v3')")==original_company
+    assert state(page)==district_after
     ctx.set_offline(False)
 
 
