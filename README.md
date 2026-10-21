@@ -1,6 +1,18 @@
 # Monsoon Merchant
 
-An installable, offline-capable trading game. **Play Monsoon Company** combines captaining, manufacturing, warehouses, sea/air/rail freight, delivery orders and finance in one 60-day campaign.
+An installable, offline-capable trading game. **Desktop Business Builder** is an ongoing district-building prototype: place facilities, approve operating policies and let the company run. **Play Monsoon Company** preserves the separate 60-day captain, manufacturing and logistics campaign.
+
+## Desktop Business Builder
+
+Open **Desktop Business Builder** on the title screen. Review **Approve company & start** to begin at normal speed. The approved company buys rice within its budget and cash reserve, processes food, serves a local buyer and repeatedly ships exports to Singapore. It requires no routine batch or delivery clicks. Pause at any time to plan, or choose **Fast** or **Very fast**.
+
+The district is the main workspace. Select a serviced plot to build, or a facility to inspect its capacity. Warehouse proximity affects factory handling. The right panel explains constraints and offers remedies; the bottom toolbar opens Build, Routes, Markets, Upgrades and Company. Regional view displays the same stock, cash, shipments and clock. Monsoon periods lengthen newly dispatched voyages.
+
+The starter proposal explicitly approves construction, purchasing, production, local sales and the export route. Later policies never borrow, expand or accept new agreements on your behalf. Advanced controls adjust production targets, stock buffers, spending limits, customer agreements and shipping. Company distinguishes operating profit from cash flow and capital investment.
+
+Progress uses its own `mm.builder.v1` browser save. Reloading, leaving the tab or exiting pauses the business; elapsed real time never advances it. Use Company to export a backup. Existing campaign saves remain in their original slots and are not imported into this differently balanced economy.
+
+This is the approved first-district prototype, not the entire long-term redesign. It has one rice-to-food chain, one local buyer and one regional export buyer. Additional products, regions, competitors, native desktop packaging and cloud saves are future work. Use a desktop for the full district layout; narrower screens stack the inspector below the map.
 
 ## The unified campaign
 
@@ -49,6 +61,8 @@ The runtime is plain HTML, CSS and JavaScript, with no build step or external ru
 - `company-actions.js`: atomic multi-step delivery/production previews and next-event advancement.
 - `company-play.js`: operations desk, route comparison, customer decisions and compact reports.
 - `company-world.js` / `company.css`: state-driven schematic map, port environment and responsive presentation.
+- `builder.js`: deterministic ongoing business simulation, operating policies and strict save validation.
+- `builder-ui.js` / `builder.css`: desktop district, regional view, inspectors and playback/persistence lifecycle.
 - `engine.js`, `ui.js`, `map.js`: preserved classic game; the company reuses its ship catalog.
 - `index.html`, `sw.js`, manifest and icons: app shell and offline assets.
 
@@ -66,10 +80,11 @@ Run browser acceptance tests with Python 3.12:
 python -m pip install -r tests/browser-requirements.txt
 python -m playwright install --with-deps chromium firefox webkit
 python tests/browser_e2e.py --browsers chromium firefox webkit --output /tmp/mm-evidence
+python tests/builder_browser.py --browsers chromium firefox webkit --output /tmp/mm-builder-evidence
 ```
 
 The browser suite uses actual UI controls against a Pages-style subpath, including a complete 60-day campaign, concurrent production and deliveries, backup/restore, service-worker offline reload, form validation, responsive layouts, legacy-save migration, and simulated storage failure. It records screenshots and failure traces. It does not access production saves.
 
 See `docs/interaction-review.md` and `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
 
-Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 1.3.0; company save schema is v3.
+Work on a review branch and merge its PR only after approval: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 1.4.0; company save schema remains v3 and builder save schema is v1.
