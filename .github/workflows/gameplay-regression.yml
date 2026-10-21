@@ -36,6 +36,8 @@ jobs:
           python -m playwright install --with-deps chromium firefox webkit
       - name: Run real browser journeys
         run: python tests/browser_e2e.py --browsers chromium firefox webkit --output "$RUNNER_TEMP/gameplay-evidence"
+      - name: Run desktop builder journeys
+        run: python tests/builder_browser.py --browsers chromium firefox webkit --output "$RUNNER_TEMP/gameplay-evidence/builder"
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4

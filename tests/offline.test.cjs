@@ -23,7 +23,7 @@ test('service worker precaches every app asset and serves cached navigation offl
         }
       }}),
       match: async key => cached.get(typeof key === 'string' ? key : './' + new URL(key.url).pathname.split('/').pop()),
-      keys: async () => ['mm-1.0.1', 'mm-1.1.0', 'mm-1.2.0', 'another-app'],
+      keys: async () => ['mm-1.0.1', 'mm-1.1.0', 'mm-1.2.0', 'mm-1.3.0', 'mm-1.4.0', 'another-app'],
       delete: async key => deleted.push(key)
     },
     fetch: async () => {throw new Error('offline');}
@@ -32,15 +32,18 @@ test('service worker precaches every app asset and serves cached navigation offl
   let pending;
   handlers.install({waitUntil(p) {pending = p;}});
   await pending;
-  assert.equal(cached.size, 17);
+  assert.equal(cached.size, 20);
   assert.ok(cached.has('./logistics.js'));
   assert.ok(cached.has('./network-ui.js'));
   assert.ok(cached.has('./company-actions.js'));
   assert.ok(cached.has('./company-play.js'));
+  assert.ok(cached.has('./builder.js'));
+  assert.ok(cached.has('./builder-ui.js'));
+  assert.ok(cached.has('./builder.css'));
   handlers.activate({waitUntil(p) {pending = p;}});
   await pending;
   assert.equal(claimed, true);
-  assert.deepEqual(deleted, ['mm-1.0.1','mm-1.1.0','mm-1.2.0']);
+  assert.deepEqual(deleted, ['mm-1.0.1','mm-1.1.0','mm-1.2.0','mm-1.3.0']);
   handlers.fetch({request: {url: 'https://example.test/monsoon-merchant/', method: 'GET', mode: 'navigate'},
     respondWith(p) {pending = p;}});
   assert.match((await pending).toString(), /Monsoon Merchant/);

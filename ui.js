@@ -1,7 +1,7 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
@@ -415,6 +415,7 @@
       (storageWarning ? '<p class="warnline" role="status">Saving failed on this device. Copy a backup before closing the game.</p>' : '') +
       (UI.swWaiting ? '<button class="update" data-a="sw-update">' + I.spark + '<span>New version ready. <b>Tap to update</b></span></button>' : '') +
       (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season</span><small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></button>' : '') +
+      '<button class="daily-card builder-entry" data-a="builder"><div class="dc-l">' + I.spark + '</div><div class="dc-m"><b>Desktop Business Builder <span class="new-tag">PROTOTYPE</span></b><small>Build a district · set your strategy · watch it work</small></div><span aria-hidden="true">→</span></button>' +
       '<button class="daily-card network-entry company-entry" data-a="network"><div class="dc-l">' + I.play + '</div><div class="dc-m"><b>Play Monsoon Company <span class="new-tag">UNIFIED</span></b><small>Captain · manufacture · ship · deliver · one campaign</small></div><span aria-hidden="true">→</span></button>' +
       '<button class="btn ghost" data-a="new-season">' + I.play + '<span>Classic captain season</span></button>' +
       '<button class="daily-card" data-a="daily">' +
@@ -971,7 +972,7 @@
     }
   }
   function render() {
-    if (UI.screen === 'network') return;
+    if (UI.screen === 'network' || UI.screen === 'builder') return;
     const screenHost = document.getElementById('screen');
     const oldKey = UI.renderedKey;
     const screenHadFocus = screenHost.contains(document.activeElement);
@@ -1105,6 +1106,12 @@
 
   /* ================= Actions ================= */
   const A = {
+    builder() {
+      if (!window.MMBuilderUI || !window.MMBuilder) { toast('The business builder could not load. Reload the game and try again.', 'bad'); return; }
+      stopSea(); stopShip(); UI.sheet = null; UI.modal = null; run = null; UI.slot = null;
+      renderOverlay(); UI.screen = 'builder';
+      window.MMBuilderUI.open({ root, onExit() { UI.screen = 'title'; render(); focusWithin(document.getElementById('screen')); } });
+    },
     network() {
       if (!window.MMNetworkUI || !window.MMNetwork) { toast('Monsoon Company could not load. Reload the game and try again.', 'bad'); return; }
       stopSea(); stopShip(); UI.sheet = null; UI.modal = null; run = null; UI.slot = null;
