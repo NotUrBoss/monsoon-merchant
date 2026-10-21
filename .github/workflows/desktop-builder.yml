@@ -1,0 +1,59 @@
+name: Desktop builder acceptance
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: desktop-builder-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check district invariants
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/district-evidence"
+          node --test tests/district.test.cjs | tee "$RUNNER_TEMP/district-evidence/engine-results.txt"
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install -r tests/browser-requirements.txt
+          python -m playwright install --with-deps chromium firefox webkit
+      - name: Play the desktop prototype in three browsers
+        run: python tests/desktop_e2e.py --output "$RUNNER_TEMP/district-evidence"
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: district-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/district-evidence/
+          retention-days: 7
+      - name: Preserve tested source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: district-source-${{ github.sha }}
+          path: |
+            desktop/
+            tests/
+            docs/
+            *.js
+            *.html
+            *.css
+            *.png
+            *.webmanifest
+            README.md
+            .github/workflows/
+          include-hidden-files: true
+          retention-days: 7
