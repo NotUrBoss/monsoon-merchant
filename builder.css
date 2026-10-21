@@ -59,7 +59,8 @@
 .b-world h1 span {display:block;font-size:11px;color:#8fb2ad;font-weight:400;letter-spacing:.04em;margin-top:8px}
 .b-view-toggle {display:flex;background:#0c2430;border:1px solid #42615f;border-radius:7px;padding:3px;box-shadow:0 4px 15px #00101b30}
 .b-view-toggle .b-button {font-size:11px;min-height:32px;padding:7px 13px;font-weight:500}
-.b-view-toggle .is-active {background:#d0d6be;color:#294439}
+.b-view-toggle .b-button.is-active,
+.b-view-toggle .b-button.is-active:hover:not(:disabled) {background:#d0d6be;color:#294439}
 .b-map-wrap {flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding-top:30px}
 .b-district-map,.b-region-map {width:100%;height:100%;max-height:800px;display:block;overflow:visible}
 .b-map-plot {cursor:pointer;outline:none}

@@ -179,6 +179,19 @@ def responsive_journey(page, context, url, out):
         no_overflow(page)
         view(page, "local")
         no_overflow(page)
+        # A generic button hover must not obscure the active map view's dark text.
+        active_view = page.locator(".b-view-toggle .is-active")
+        active_view.hover()
+        contrast = active_view.evaluate("""element => {
+          const style = getComputedStyle(element);
+          const luminance = color => color.match(/[\\d.]+/g).slice(0,3)
+            .map(Number).map(v => v / 255)
+            .map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+            .reduce((sum,v,i) => sum + v * [0.2126,0.7152,0.0722][i], 0);
+          const a=luminance(style.color), b=luminance(style.backgroundColor);
+          return (Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
+        }""")
+        assert contrast >= 4.5, f"Hovered active map view has poor text contrast: {contrast}"
         snapshot(page, out, f"layout-{width}")
     assert state(page) == initial, "Responsive navigation changed company state"
     page.locator('[data-b="speed"][data-speed="1"]').focus()
