@@ -368,7 +368,7 @@ def failed_restore_journey(page, context, url, out):
     assert page.locator('[data-stat="day"]').inner_text() == "Day 7"
     assert "could not" in page.locator(".builder-shell").inner_text().lower()
     snapshot(page, out, "failed-restore-keeps-company")
-    page.evaluate("Storage.prototype.setItem = window.__builderSetItem")
+    page.evaluate("() => { Storage.prototype.setItem = window.__builderSetItem; }")
     click(page, "exit")
     assert economy(state(page)) == economy(existing), "Failed restore replaced in-memory company"
     assert economy(resume(page, url)) == economy(existing)
