@@ -1,14 +1,14 @@
 {
   "name": "Monsoon Merchant",
   "short_name": "Monsoon",
-  "description": "Strategic trading across the monsoon seas of Southeast Asia. Plays offline.",
+  "description": "A 16-bit trading game across the monsoon seas of Southeast Asia. Plays offline.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0B1A2C",
-  "theme_color": "#0B1A2C",
+  "background_color": "#111733",
+  "theme_color": "#111733",
   "categories": ["games"],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

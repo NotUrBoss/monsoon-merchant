@@ -1,6 +1,6 @@
 /* Monsoon Merchant service worker: caches the whole game so it runs with no connection. */
-const CACHE = 'mm-1.3.0';
-const ASSETS = ['./', './index.html', './style.css', './engine.js', './map.js', './logistics.js', './network-ui.js', './company-actions.js', './company-play.js', './company-world.js', './company.css', './ui.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
+const CACHE = 'mm-2.0.0';
+const ASSETS = ['./', './index.html', './style.css', './engine.js', './map.js', './art.js', './pixel.js', './sfx.js', './ui.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
@@ -23,8 +23,7 @@ self.addEventListener('fetch', event => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  const appPath = new URL('./', self.location.href).pathname;
-  if (req.mode === 'navigate' && (url.pathname === appPath || url.pathname === appPath + 'index.html')) {
+  if (req.mode === 'navigate') {
     event.respondWith(
       caches.match('./index.html').then(hit => hit || fetch(req)).catch(() => caches.match('./index.html'))
     );

@@ -1,64 +1,30 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '2.0.0';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
 
   /* ================= Storage ================= */
-  const KEYS = { meta: 'mm.meta.v1', normal: 'mm.run.normal.v1', daily: 'mm.run.daily.v1' };
-  let storageWarning = false;
-  function savingFailed() {
-    if (!storageWarning) toast('Progress could not be saved. Keep this tab open and copy a backup from the menu.', 'bad');
-    storageWarning = true;
-  }
+  const KEYS = { meta: 'mm.meta.v1', normal: 'mm.run.normal.v2', daily: 'mm.run.daily.v2' };
+  ['mm.run.normal.v1', 'mm.run.daily.v1'].forEach(k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } });
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { savingFailed(); return false; } }
-  function lsDel(k) { try { localStorage.removeItem(k); return true; } catch (e) { savingFailed(); return false; } }
-  function loadMeta() { const raw = lsGet(KEYS.meta); if (raw) { try { return MM.deserializeMeta(raw); } catch (e) { /* fall through */ } } return MM.newMeta(); }
-  function saveMeta() { return lsSet(KEYS.meta, JSON.stringify(meta)); }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  function mergeMeta(m) {
+    const b = MM.newMeta();
+    ['settings', 'stats', 'daily'].forEach(sec => { m[sec] = Object.assign({}, b[sec], m[sec] || {}); });
+    Object.keys(b).forEach(k => { if (m[k] === undefined) m[k] = b[k]; });
+    return m;
+  }
+  function loadMeta() { const raw = lsGet(KEYS.meta); if (raw) { try { return mergeMeta(JSON.parse(raw)); } catch (e) { /* fall through */ } } return MM.newMeta(); }
+  function saveMeta() { lsSet(KEYS.meta, JSON.stringify(meta)); }
   function loadSlot(slot) {
     const raw = lsGet(KEYS[slot]); if (!raw) return null;
     try { const s = MM.deserialize(raw); return s.phase === 'ended' ? null : s; } catch (e) { return null; }
   }
-  function saveRun() { if (!run || !UI.slot) return true; return run.phase === 'ended' ? lsDel(KEYS[UI.slot]) : lsSet(KEYS[UI.slot], MM.serialize(run)); }
-
-  function restoreBackup(data) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid backup');
-    const nextMeta = MM.deserializeMeta(JSON.stringify(data.meta));
-    const values = [[KEYS.meta, JSON.stringify(nextMeta)]];
-    ['normal', 'daily'].forEach(slot => {
-      const raw = data[slot];
-      if (raw !== null && raw !== undefined) {
-        const saved = MM.deserialize(raw);
-        if (saved.mode !== slot) throw new Error('Wrong save slot');
-      }
-      values.push([KEYS[slot], raw == null ? null : raw]);
-    });
-    // Validate every slot before touching storage; keep old values for rollback.
-    let previous;
-    try { previous = values.map(([key]) => [key, localStorage.getItem(key)]); }
-    catch (error) { const failure = new Error('Restore could not access this device’s storage. Your progress was not changed.'); failure.storage = true; throw failure; }
-    let written = 0;
-    try {
-      values.forEach(([key, value]) => {
-        if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
-        written++;
-      });
-    } catch (error) {
-      let rolledBack = true;
-      for (let i = written - 1; i >= 0; i--) {
-        const [key, value] = previous[i];
-        try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
-        catch (rollbackError) { rolledBack = false; }
-      }
-      const failure = new Error(rolledBack ? 'Restore could not be saved. Your previous progress is unchanged.' : 'Restore failed and previous saves could not be fully recovered. Keep this tab and your backup code open.');
-      failure.storage = true;
-      throw failure;
-    }
-    return nextMeta;
-  }
+  function saveRun() { if (!run || !UI.slot) return; if (run.phase === 'ended') lsDel(KEYS[UI.slot]); else lsSet(KEYS[UI.slot], MM.serialize(run)); }
 
   let meta = loadMeta();
   let run = null;
@@ -66,60 +32,12 @@
     screen: 'title', slot: null, tab: 'market', sheet: null, modal: null,
     setup: { captain: 'rahim', level: 0 }, lastCash: null, final: null, endRun: null,
     sea: { timer: null, raf: null, fast: false, frac: 0 }, seenNews: 0, installEvt: null, swWaiting: null,
-    scroll: {}, legacyCat: 'Captains', importOpen: false,
+    scroll: {}, legacyCat: 'Captains', importOpen: false, widgets: [], owidgets: [], seaScene: null, seaMap: null,
   };
 
   /* ================= Sound & haptics ================= */
-  const Sound = (function () {
-    let ctx = null;
-    function ac() {
-      if (!meta.settings.sound) return null;
-      try {
-        if (!ctx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ctx = new C(); }
-        if (ctx.state === 'suspended') ctx.resume();
-      } catch (e) { return null; }
-      return ctx;
-    }
-    function tone(freq, dur, type, vol, when, slide) {
-      const c = ac(); if (!c) return;
-      const t = c.currentTime + (when || 0);
-      const o = c.createOscillator(), g = c.createGain();
-      o.type = type || 'sine';
-      o.frequency.setValueAtTime(freq, t);
-      if (slide) o.frequency.exponentialRampToValueAtTime(freq * slide, t + dur);
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(vol || 0.1, t + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g); g.connect(c.destination);
-      o.start(t); o.stop(t + dur + 0.05);
-    }
-    function noise(dur, vol, when, freq) {
-      const c = ac(); if (!c) return;
-      const t = c.currentTime + (when || 0);
-      const len = Math.floor(c.sampleRate * dur);
-      const buf = c.createBuffer(1, len, c.sampleRate), data = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-      const src = c.createBufferSource(); src.buffer = buf;
-      const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(freq || 800, t); f.frequency.exponentialRampToValueAtTime(120, t + dur);
-      const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol || 0.2, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      src.connect(f); f.connect(g); g.connect(c.destination); src.start(t); src.stop(t + dur);
-    }
-    return {
-      unlock() { ac(); },
-      tap() { tone(700, 0.04, 'triangle', 0.035); },
-      buy() { tone(523, 0.07, 'triangle', 0.09); tone(784, 0.11, 'triangle', 0.09, 0.06); },
-      sell(up) { if (up) [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.12, 'triangle', 0.09, i * 0.055)); else { tone(392, 0.14, 'triangle', 0.08); tone(311, 0.2, 'triangle', 0.08, 0.1); } },
-      horn() { tone(98, 0.9, 'sawtooth', 0.045); tone(147, 0.9, 'sawtooth', 0.03); },
-      bell() { tone(988, 1.1, 'sine', 0.09); tone(1480, 0.7, 'sine', 0.035, 0.01); tone(988, 0.9, 'sine', 0.05, 0.35); },
-      storm() { noise(1.4, 0.22, 0, 900); tone(60, 1.0, 'sine', 0.07, 0.1); },
-      alert() { tone(880, 0.12, 'square', 0.035); tone(660, 0.16, 'square', 0.035, 0.14); },
-      good() { tone(659, 0.1, 'triangle', 0.08); tone(988, 0.16, 'triangle', 0.08, 0.08); },
-      bad() { tone(220, 0.22, 'sawtooth', 0.04); tone(165, 0.3, 'sawtooth', 0.04, 0.12); },
-      ach() { [784, 988, 1175, 1568].forEach((f, i) => tone(f, 0.18, 'sine', 0.07, i * 0.07)); },
-      fanfare() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.22, 'triangle', 0.08, i * 0.11)); },
-      error() { tone(180, 0.12, 'square', 0.03); },
-    };
-  })();
+  SFX.config({ sound: () => !!meta.settings.sound, music: () => !!meta.settings.sound && !!meta.settings.music });
+  const Sound = SFX.S;
   function buzz(p) { if (meta.settings.haptics && navigator.vibrate) { try { navigator.vibrate(p); } catch (e) { /* ignore */ } } }
 
   /* ================= Helpers ================= */
@@ -134,77 +52,15 @@
   const pShort = p => MM.PORTS[p].short;
   const reduceMotion = () => !meta.settings.motion || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-  /* ================= Icons ================= */
-  const sv = (body, extra) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || '') + '>' + body + '</svg>';
-  const I = {
-    market: sv('<path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v11h16V9"/><path d="M3 9h18"/><path d="M9 20v-6h6v6"/>'),
-    map: sv('<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
-    ship: sv('<path d="M3 15l2 5h14l2-5z"/><path d="M6 15V9h12v6"/><path d="M12 9V4"/><path d="M9 6h6"/>'),
-    office: sv('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M3 12h18"/>'),
-    back: sv('<path d="M15 18l-6-6 6-6"/>'),
-    close: sv('<path d="M18 6L6 18M6 6l12 12"/>'),
-    coins: sv('<ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v4c0 1.7 2.7 3 6 3s6-1.3 6-3V7"/><path d="M9 14v3c0 1.7 2.7 3 6 3s6-1.3 6-3v-4c0-1.7-2.7-3-6-3"/>'),
-    box: sv('<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>'),
-    chart: sv('<path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/>'),
-    menu: sv('<path d="M4 7h16M4 12h16M4 17h16"/>'),
-    anchor: sv('<circle cx="12" cy="5" r="2"/><path d="M12 7v14"/><path d="M5 13a7 7 0 0014 0"/><path d="M8 10h8"/>'),
-    wind: sv('<path d="M3 8h11a3 3 0 10-3-3"/><path d="M3 12h16a3 3 0 11-3 3"/><path d="M3 16h7"/>'),
-    bank: sv('<path d="M3 10l9-6 9 6"/><path d="M5 10v8M9 10v8M15 10v8M19 10v8"/><path d="M3 20h18"/>'),
-    yard: sv('<path d="M4 21V8l6-4v17"/><path d="M10 9h6l4 3v9"/><path d="M14 13h2M14 17h2"/>'),
-    storm: sv('<path d="M20 16.6A5 5 0 0018 7h-1.3A8 8 0 104 15"/><path d="M13 11l-4 6h6l-4 6"/>'),
-    pirates: sv('<path d="M4 20L16 8"/><path d="M14 6l4-2-2 4"/><path d="M20 20L8 8"/><path d="M10 6L6 4l2 4"/><path d="M5 17l2 2M19 17l-2 2"/>'),
-    engine: sv('<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.8-3.8a6 6 0 01-7.9 7.9l-6.9 6.9a2.1 2.1 0 01-3-3l6.9-6.9a6 6 0 017.9-7.9z"/>'),
-    salvage: sv('<rect x="3" y="8" width="18" height="12" rx="1"/><path d="M7 8v12M12 8v12M17 8v12"/><path d="M2 5c3 2 5-2 8 0s5 2 8 0 3-1 4 0"/>'),
-    trader: sv('<path d="M8 11l3 3 7-7"/><path d="M3 12l5 5 3-3"/><path d="M12 17l2 2 7-7"/>'),
-    crew: sv('<path d="M4 11h16a8 8 0 01-16 0z"/><path d="M8 7c0-2 2-2 2-4M12 7c0-2 2-2 2-4M16 7c0-2 2-2 2-4"/>'),
-    current: sv('<path d="M2 8c3 2 5-2 8 0s5 2 8 0 3-1 4 0"/><path d="M2 13c3 2 5-2 8 0s5 2 8 0 3-1 4 0"/><path d="M2 18c3 2 5-2 8 0s5 2 8 0 3-1 4 0"/>'),
-    radio: sv('<rect x="3" y="10" width="18" height="11" rx="2"/><path d="M7 10l9-6"/><circle cx="8" cy="15.5" r="2"/><path d="M14 14h4M14 17h4"/>'),
-    customs: sv('<path d="M9 3h6l1 4H8z"/><rect x="5" y="7" width="14" height="14" rx="2"/><path d="M9 12h6M9 16h4"/>'),
-    flame: sv('<path d="M12 22c4 0 7-3 7-7 0-4-3-6-4-9-1 2-2 3-4 3 1-3 0-5-2-7-1 4-4 6-4 11 0 5 3 9 7 9z"/>'),
-    star: sv('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>'),
-    lock: sv('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>'),
-    check: sv('<path d="M5 12l5 5 9-10"/>'),
-    info: sv('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>'),
-    gear: sv('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>'),
-    trophy: sv('<path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 01-10 0z"/><path d="M7 6H4v2a3 3 0 003 3M17 6h3v2a3 3 0 01-3 3"/>'),
-    spark: sv('<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/>'),
-    calendar: sv('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
-    play: sv('<path d="M7 4l13 8-13 8z"/>'),
-    fast: sv('<path d="M3 5l9 7-9 7z"/><path d="M12 5l9 7-9 7z"/>'),
-    plus: sv('<path d="M12 5v14M5 12h14"/>'),
-    minus: sv('<path d="M5 12h14"/>'),
-    up: sv('<path d="M12 19V5M5 12l7-7 7 7"/>'),
-    down: sv('<path d="M12 5v14M5 12l7 7 7-7"/>'),
-    rumour: sv('<path d="M21 12a8 8 0 01-11.6 7.1L4 21l1.9-5.4A8 8 0 1121 12z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/>'),
-    news: sv('<path d="M4 5h13v14H6a2 2 0 01-2-2z"/><path d="M17 9h3v8a2 2 0 01-2 2"/><path d="M8 9h5M8 13h5"/>'),
-    sun: sv('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
-    sound: sv('<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13"/>'),
-    help: sv('<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 .5c0 1.7-2.5 2-2.5 3.5M12 17v.01"/>'),
-    download: sv('<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>'),
-    flag: sv('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
-    clock: sv('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
-    shield: sv('<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>'),
-    skull: sv('<path d="M12 3a8 8 0 00-5 14.2V20h10v-2.8A8 8 0 0012 3z"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><path d="M10 20v-2M14 20v-2"/>'),
-  };
-  const GC = { rice: '#EADFB8', palm: '#F2B84B', rubber: '#A9B6C3', steel: '#86A6C6', coffee: '#CF9264', electronics: '#6FB6FF', durian: '#A8D86A', coal: '#8A94A3' };
-  const GICON = {
-    rice: '<svg viewBox="0 0 24 24"><path d="M3 11h18a9 9 0 01-18 0z" fill="currentColor" opacity=".9"/><ellipse cx="8" cy="8.5" rx="1.3" ry="2" transform="rotate(-30 8 8.5)" fill="currentColor"/><ellipse cx="12" cy="7" rx="1.3" ry="2" fill="currentColor"/><ellipse cx="16" cy="8.5" rx="1.3" ry="2" transform="rotate(30 16 8.5)" fill="currentColor"/></svg>',
-    palm: '<svg viewBox="0 0 24 24"><path d="M12 2.5c3.5 5 6.5 8.5 6.5 12a6.5 6.5 0 01-13 0c0-3.5 3-7 6.5-12z" fill="currentColor"/><path d="M9 15a3 3 0 003 3" stroke="#0B1726" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".55"/></svg>',
-    rubber: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="currentColor"/><circle cx="12" cy="12" r="4" fill="#0B1726" opacity=".75"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" stroke="#0B1726" stroke-width="1.5" opacity=".6"/></svg>',
-    steel: '<svg viewBox="0 0 24 24"><path d="M4 4h16v4h-6v8h6v4H4v-4h6V8H4z" fill="currentColor"/></svg>',
-    coffee: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="7" ry="9.5" transform="rotate(25 12 12)" fill="currentColor"/><path d="M9.5 4.5c2.5 3 2 5.5 1.5 7.5s-1 4.5 1.5 7.5" stroke="#0B1726" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".6"/></svg>',
-    electronics: '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/><rect x="9.5" y="9.5" width="5" height="5" rx="1" fill="#0B1726" opacity=".55"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
-    durian: '<svg viewBox="0 0 24 24"><path d="M12 3l1.5 2.5L16 4l.5 3 3 .5-1.5 2.5L20.5 12 18 13.5l1.5 2.5-3 .5-.5 3-2.5-1.5L12 21l-1.5-3L8 19.5l-.5-3-3-.5L6 13.5 3.5 12 6 10 4.5 7.5l3-.5L8 4l2.5 1.5z" fill="currentColor"/><path d="M12 1.5v3" stroke="#6b8f3a" stroke-width="2" stroke-linecap="round"/></svg>',
-    coal: '<svg viewBox="0 0 24 24"><path d="M3 17l3-6 4 1 2-5 5 2 3 5-2 5H5z" fill="currentColor"/><path d="M10 12l2 4M17 9l-2 5" stroke="#0B1726" stroke-width="1.4" opacity=".5"/></svg>',
-  };
-  const gIcon = (g, cls) => '<span class="gi ' + (cls || '') + '" style="--c:' + GC[g] + '">' + GICON[g] + '</span>';
-  const CAPT_COLORS = { rahim: '#2EC4B6', meiling: '#FF8FB1', teoh: '#6FB6FF', kumar: '#F2B84B', siti: '#B794F6', wong: '#A8D86A' };
-  function captAvatar(id, size) {
-    const c = MM.CAPTAINS[id], col = CAPT_COLORS[id];
-    const ini = c.name.split(' ').map(w => w[0]).join('').slice(0, 2);
-    return '<span class="avatar" style="--c:' + col + ';--s:' + (size || 44) + 'px"><b>' + esc(ini) + '</b></span>';
-  }
+  /* ================= Pixel sprites ================= */
+  PX.installCSS();
+  const I = {};
+  Object.keys(ART_BASE.ICONS).forEach(k => { I[k] = '<i class="ic ic-' + k + '" aria-hidden="true"></i>'; });
+  const GC = { rice: '#ebc98f', palm: '#ffd65c', rubber: '#8d8a99', steel: '#6fb7ea', coffee: '#c08f58', electronics: '#39c3b2', durian: '#84cf54', coal: '#57556b' };
+  const gIcon = (g, cls) => '<i class="gi gi-' + g + ' ' + (cls || '') + '" aria-hidden="true"></i>';
+  function captAvatar(id, size) { return '<i class="pt pt-' + id + '" style="--s:' + (size || 48) + 'px" aria-hidden="true"></i>'; }
   const EV_ICON = { storm: 'storm', pirates: 'pirates', engine: 'engine', salvage: 'salvage', trader: 'trader', crew: 'crew', current: 'current', radio: 'radio', customs: 'customs' };
+  const EV_SPEAKER = { pirates: 'Bosun', storm: 'Lookout', engine: 'Engineer', salvage: 'Lookout', trader: 'Radio officer', crew: 'Cook', current: 'Navigator', radio: 'Radio officer', customs: 'Customs officer' };
 
   /* ================= Toasts ================= */
   function toast(text, kind) {
@@ -227,7 +83,7 @@
 
   /* ================= Tips ================= */
   const TIPS = {
-    market: 'Buy cargo here, open Map to choose a destination, then sail and sell. Keep cash for voyage costs. Price tags compare with the regional average; prices elsewhere may be old.',
+    market: 'Prices here are live. The tag compares each price with the regional average: green is cheap, gold is dear. Tap a cargo to trade.',
     map: 'Tap a port to plan a voyage. You only see live prices where you are. Elsewhere you see the last prices you heard, so check how old they are.',
     office: 'Contracts pay a premium if you deliver by a deadline. Banks lend cheaply at big ports. The Ah Long lends anywhere, at 3% a day.',
     ship: 'Bigger ships carry more but cost more to run each day. Your ship counts toward net worth at 60% of its price.',
@@ -238,122 +94,45 @@
     return '<div class="tip">' + I.info + '<p>' + esc(TIPS[id]) + '</p><button class="tip-ok" data-a="tip-ok" data-id="' + id + '">Got it</button></div>';
   }
 
-  /* ================= Map ================= */
-  function pointInPoly(x, y, pts) {
-    let inside = false;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
-      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
-    }
-    return inside;
-  }
-  let streakCache = null;
-  function windStreaks() {
-    if (streakCache) return streakCache;
-    const polys = Object.keys(MAP.LAND).map(k => MAP.LAND[k].map(p => MAP.proj(p[0], p[1])));
-    const out = [];
-    let seed = 7;
-    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    let tries = 0;
-    while (out.length < 26 && tries++ < 600) {
-      const x = 30 + rnd() * (MAP.W - 60), y = 30 + rnd() * (MAP.H - 60);
-      if (polys.some(pl => pointInPoly(x, y, pl))) continue;
-      if (out.some(o => Math.hypot(o[0] - x, o[1] - y) < 70)) continue;
-      out.push([x, y, rnd()]);
-    }
-    streakCache = out;
-    return out;
-  }
-  function mapDefs() {
-    return '<defs>' +
-      '<radialGradient id="seaG" cx="55%" cy="45%" r="75%"><stop offset="0" stop-color="#103051"/><stop offset="1" stop-color="#0A1B2E"/></radialGradient>' +
-      '<linearGradient id="landG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A4559"/><stop offset="1" stop-color="#20374A"/></linearGradient>' +
-      '<pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M60 0H0V60" fill="none" stroke="#1B3B5C" stroke-width=".8" opacity=".55"/></pattern>' +
-      '</defs>';
-  }
-  function mapSVG(opts) {
-    const s = run;
-    const vb = opts.viewBox || [0, 0, MAP.W, MAP.H];
-    const scale = vb[2] / MAP.W;
-    let h = '<svg class="map" viewBox="' + vb.map(v => Math.round(v * 10) / 10).join(' ') + '" preserveAspectRatio="xMidYMid meet"' + (opts.interactive ? ' data-a="map"' : '') + ' role="img" aria-label="Sea chart">';
-    h += mapDefs();
-    h += '<rect x="-50" y="-50" width="' + (MAP.W + 100) + '" height="' + (MAP.H + 100) + '" fill="url(#seaG)"/>';
-    h += '<rect width="' + MAP.W + '" height="' + MAP.H + '" fill="url(#grid)"/>';
-    // wind streaks
-    const k = Math.SQRT1_2, ph = s.monsoon.phase;
-    const dx = ph === 'NE' ? -k : k, dy = ph === 'NE' ? k : -k;
-    h += '<g class="streaks' + (reduceMotion() ? ' still' : '') + '">';
-    windStreaks().forEach(([x, y, r]) => {
-      h += '<path d="M' + (x - dx * 16).toFixed(1) + ',' + (y - dy * 16).toFixed(1) + 'L' + (x + dx * 16).toFixed(1) + ',' + (y + dy * 16).toFixed(1) + '" style="animation-delay:-' + (r * 3).toFixed(2) + 's"/>';
+  /* ================= Widgets: pixel scenes and the sea chart ================= */
+  // Placeholders are rendered as HTML, then mounted with live canvases after each render.
+  function sceneHTML(id, opts, cls) { UI.pending = UI.pending || {}; UI.pending[id] = opts; return '<div class="scene ' + (cls || '') + '" data-scene="' + id + '"><canvas></canvas></div>'; }
+  function mapHTML(id, opts) { UI.pending = UI.pending || {}; UI.pending[id] = opts; return '<div class="pxmap" data-map="' + id + '"' + (opts.interactive ? ' data-a="map"' : '') + '><div class="map-labels"></div></div>'; }
+  function mountIn(host, list) {
+    host.querySelectorAll('[data-scene]').forEach(el => {
+      const o = (UI.pending || {})[el.dataset.scene] || {};
+      const sc = new PX.Scene(el.querySelector('canvas'), Object.assign({ still: reduceMotion() }, o));
+      sc.start(); list.push(sc); el._w = sc;
+      if (el.dataset.scene === 'sea') UI.seaScene = sc;
     });
-    h += '</g>';
-    h += '<g class="land">' + MAP.landPaths().map(d => '<path d="' + d + '"/>').join('') + '</g>';
-    h += '<g class="lanes" style="stroke-width:' + (1.3 * scale).toFixed(2) + '">' + MM.EDGES.map(([a, b]) => { const A = MAP.nodeXY(MM, a), B = MAP.nodeXY(MM, b); return '<line x1="' + A[0].toFixed(1) + '" y1="' + A[1].toFixed(1) + '" x2="' + B[0].toFixed(1) + '" y2="' + B[1].toFixed(1) + '"/>'; }).join('') + '</g>';
-    if (opts.route) {
-      const r = MM.route(opts.route.from, opts.route.to);
-      const pts = MAP.routePoints(MM, r);
-      h += '<path class="route-glow" d="' + MAP.polyD(pts) + '" style="stroke-width:' + (9 * scale).toFixed(2) + '"/>';
-      h += '<path class="route" d="' + MAP.polyD(pts) + '" style="stroke-width:' + (3 * scale).toFixed(2) + ';stroke-dasharray:' + (8 * scale).toFixed(2) + ' ' + (7 * scale).toFixed(2) + ';--off:' + (-30 * scale).toFixed(2) + 'px"/>';
-    }
-    // contract destinations
-    const dests = {}; s.contracts.forEach(c => { dests[c.dest] = true; });
-    MM.PORT_IDS.forEach(p => {
-      const [x, y] = MAP.nodeXY(MM, p);
-      const avail = s.ports.indexOf(p) >= 0;
-      const here = s.phase !== 'sea' && s.port === p;
-      const sel = opts.selected === p;
-      const cls = ['port', avail ? '' : 'locked', here ? 'here' : '', sel ? 'sel' : '', dests[p] ? 'dest' : ''].join(' ');
-      const L = MAP.LABELS[p];
-      const r = (here ? 8.5 : 7) * Math.max(scale, 0.45);
-      h += '<g class="' + cls + '">';
-      if (here && !reduceMotion()) h += '<circle class="pulse" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (r * 1.9).toFixed(1) + '"/>';
-      if (dests[p]) h += '<circle class="ring" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (r * 1.7).toFixed(1) + '" style="stroke-width:' + (2 * scale).toFixed(2) + '"/>';
-      h += '<circle class="dot" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + r.toFixed(1) + '" style="stroke-width:' + (2.5 * scale).toFixed(2) + '"/>';
-      h += '<text x="' + (x + L[0] * scale).toFixed(1) + '" y="' + (y + L[1] * scale).toFixed(1) + '" text-anchor="' + L[2] + '" style="font-size:' + (17 * Math.max(scale, 0.5)).toFixed(1) + 'px;stroke-width:' + (4 * Math.max(scale, 0.5)).toFixed(1) + 'px">' + esc(pShort(p)) + '</text>';
-      h += '</g>';
+    host.querySelectorAll('[data-map]').forEach(el => {
+      const o = (UI.pending || {})[el.dataset.map] || {};
+      const mv = new PX.MapView(el, Object.assign({ still: reduceMotion() }, o));
+      mv.start(); list.push(mv); el._w = mv;
+      const lab = el.querySelector('.map-labels');
+      if (lab && o.labels !== false) {
+        lab.innerHTML = MM.PORT_IDS.map(p => {
+          const [x, y] = mv.labelPos(p);
+          const L = MAP.LABELS[p] || [0, 0, 'middle'];
+          const cls = ['lbl', o.here === p ? 'here' : '', (o.locked || []).indexOf(p) >= 0 ? 'locked' : '', o.selected === p ? 'sel' : '', L[2]].join(' ');
+          return '<span class="' + cls + '" style="left:' + x.toFixed(2) + '%;top:' + y.toFixed(2) + '%">' + esc(pShort(p)) + '</span>';
+        }).join('');
+      }
+      if (el.dataset.map === 'sea') UI.seaMap = mv;
+      if (el.dataset.map === 'main') UI.mainMap = mv;
     });
-    if (opts.ship) {
-      h += '<g class="ship-mk" id="shipMk"><g style="transform:scale(' + (Math.max(scale, 0.35)).toFixed(3) + ')"><path d="M-13,-5 L9,-5 L15,0 L9,5 L-13,5 Z" class="hull"/><path d="M-6,-5 L-6,-14 L4,-5 Z" class="sail"/></g></g>';
-    }
-    h += '</svg>';
-    return h;
   }
-  function seaViewBox(from, to) {
-    const r = MM.route(from, to);
-    const pts = MAP.routePoints(MM, r);
-    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-    pts.forEach(p => { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); });
-    const pad = 60;
-    x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
-    let w = x1 - x0, h = y1 - y0;
-    const aspect = 1.05; // height / width of the sea map box
-    const minW = 300;
-    if (w < minW) { x0 -= (minW - w) / 2; w = minW; }
-    if (h / w < aspect) { const nh = w * aspect; y0 -= (nh - h) / 2; h = nh; } else { const nw = h / aspect; x0 -= (nw - w) / 2; w = nw; }
-    x0 = Math.max(-40, Math.min(x0, MAP.W + 40 - w));
-    y0 = Math.max(-40, Math.min(y0, MAP.H + 40 - h));
-    return [x0, y0, w, h];
-  }
-  function placeShip(frac) {
-    const el = document.getElementById('shipMk'); if (!el || !run || !run.voyage) return;
-    const pts = MAP.routePoints(MM, MM.route(run.voyage.from, run.voyage.to));
-    const p = MAP.pointAlong(pts, frac);
-    const flip = Math.abs(p.angle) > 90;
-    el.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ') rotate(' + (flip ? p.angle + 180 : p.angle).toFixed(1) + ')' + (flip ? ' scale(-1,1)' : ''));
-  }
+  function unmount(list) { while (list.length) { const w = list.pop(); try { w.stop(); } catch (e) { /* ignore */ } } }
   function animateShip(toFrac, ms) {
     cancelAnimationFrame(UI.sea.raf);
     const from = UI.sea.frac;
-    if (reduceMotion() || ms <= 0) { UI.sea.frac = toFrac; placeShip(toFrac); return; }
+    const apply = f => { UI.sea.frac = f; if (UI.seaMap) UI.seaMap.set({ frac: f }); };
+    if (reduceMotion() || ms <= 0) { apply(toFrac); return; }
     const t0 = performance.now();
-    const step = (t) => {
-      const k = Math.min(1, (t - t0) / ms);
-      UI.sea.frac = from + (toFrac - from) * k;
-      placeShip(UI.sea.frac);
-      if (k < 1) UI.sea.raf = requestAnimationFrame(step);
-    };
+    const step = (t) => { const k = Math.min(1, (t - t0) / ms); apply(from + (toFrac - from) * k); if (k < 1) UI.sea.raf = requestAnimationFrame(step); };
     UI.sea.raf = requestAnimationFrame(step);
   }
+  function lockedPorts(s) { return MM.PORT_IDS.filter(p => s.ports.indexOf(p) < 0); }
 
   /* ================= Shared bits ================= */
   function topbar(title, backAction, right) {
@@ -361,32 +140,36 @@
   }
   function windChip(s) {
     const days = s.monsoon.shifted ? null : s.monsoon.forecast - s.day;
-    const arrow = s.monsoon.phase === 'NE' ? 'ne' : 'sw';
     let sub = '';
-    if (days !== null) sub = s.level >= 10 ? '?' : days > 0 ? '~' + days + 'd' : 'now';
-    return '<button class="chip wind ' + arrow + '" data-a="wind-info"><span class="arrow">' + I.up + '</span><b>' + s.monsoon.phase + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</button>';
+    if (days !== null) sub = s.level >= 10 ? '?' : days > 0 ? days + 'd' : 'now';
+    return '<button class="chip wind ' + (s.monsoon.phase === 'NE' ? 'ne' : 'sw') + '" data-a="wind-info">' + I.wind + '<b>' + s.monsoon.phase + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</button>';
   }
   function hud() {
     const s = run;
     const nw = MM.netWorth(s), debt = s.bank + s.along;
     const used = MM.cargoUsed(s), cap = MM.shipCap(s);
-    const loc = s.phase === 'sea' ? pShort(s.voyage.from) + ' → ' + pShort(s.voyage.to) : (pName(s.port).length > 12 ? pShort(s.port) : pName(s.port));
+    const loc = s.phase === 'sea' ? pShort(s.voyage.from) + ' » ' + pShort(s.voyage.to) : (pName(s.port).length > 12 ? pShort(s.port) : pName(s.port));
+    const rv = s.rival ? s.rival.nw : 0, ahead = nw >= rv;
     return '<header class="hud">' +
       '<div class="hud-r1"><button class="menu-btn" data-a="menu" aria-label="Menu">' + I.menu + '</button><div class="loc">' + (s.phase === 'sea' ? I.ship : I.anchor) + '<span>' + esc(loc) + '</span></div>' + windChip(s) +
       '<button class="day" data-a="season-info"><span>Day <b>' + s.day + '</b>/' + s.maxDays + '</span><i style="width:' + Math.min(100, (s.day / s.maxDays) * 100).toFixed(0) + '%"></i></button></div>' +
       '<div class="hud-r2">' +
       '<div class="stat cash">' + I.coins + '<div><small>Cash</small><b id="hudCash" class="' + (s.cash < 0 ? 'neg' : '') + '">' + rm(s.cash) + '</b></div></div>' +
-      '<div class="stat">' + I.box + '<div><small>Hold</small><b>' + num(used) + '<span class="dim">/' + num(cap) + ' t</span></b></div></div>' +
-      '<div class="stat worth">' + I.chart + '<div><small>Net worth</small><b>' + rm(nw) + '</b></div>' + (debt > 0 ? '<span class="debt-badge">owes ' + rm(debt).replace('RM ', '') + '</span>' : '') + '</div>' +
-      '</div></header>';
+      '<div class="stat">' + I.box + '<div><small>Hold</small><b>' + num(used) + '<span class="dim">/' + num(cap) + '</span></b></div></div>' +
+      '<div class="stat worth">' + I.chart + '<div><small>Worth</small><b>' + rm(nw) + '</b></div>' + (debt > 0 ? '<span class="debt-badge">owes ' + rm(debt).replace('RM ', '') + '</span>' : '') + '</div>' +
+      '</div>' +
+      (s.rival ? '<button class="rivalbar ' + (ahead ? 'ahead' : 'behind') + '" data-a="rival-info">' + captAvatar('lim', 22) + '<span>' + esc(MM.RIVAL.name) + ' <b>' + rm(rv) + '</b></span><em>' + (ahead ? 'You lead by ' + rm(nw - rv) : 'Behind by ' + rm(rv - nw)) + '</em></button>' : '') +
+      '</header>';
   }
   function tabs() {
     const s = run;
     const officeDot = s.offers.length > 0 || s.news.some(n => n.id > UI.seenNews && n.day <= s.day && n.kind === 'rumour');
     const shipDot = MM.PORTS[s.port].yard && s.ship.cond < 60;
-    const t = (id, icon, label, dot) => '<button class="tab ' + (UI.tab === id ? 'on' : '') + '" data-a="tab" data-id="' + id + '"' + (UI.tab === id ? ' aria-current="page"' : '') + '>' + icon + '<span>' + label + '</span>' + (dot ? '<i class="dot"></i>' : '') + '</button>';
+    const t = (id, icon, label, dot) => '<button class="tab ' + (UI.tab === id ? 'on' : '') + '" data-a="tab" data-id="' + id + '">' + icon + '<span>' + label + '</span>' + (dot ? '<i class="dot"></i>' : '') + '</button>';
     return '<nav class="tabs">' + t('market', I.market, 'Market') + t('map', I.map, 'Map') + t('ship', I.ship, 'Ship', shipDot) + t('office', I.office, 'Office', officeDot) + '</nav>';
   }
+  const EV_TAG = { shortage: 'Shortage', glut: 'Glut', boom: 'Boom', bust: 'Slump', squeeze: 'Lim buying', dump: 'Lim dumping' };
+  const isUp = k => k === 'shortage' || k === 'boom' || k === 'squeeze';
   function ageLabel(age) { return age <= 0 ? 'today' : age === 1 ? '1 day old' : age + ' days old'; }
   function ageClass(age) { return age <= 1 ? 'fresh' : age <= 5 ? 'aging' : 'stale'; }
 
@@ -403,31 +186,26 @@
     const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     let install = '';
     if (!standalone) {
-      if (UI.installEvt) install = '<button class="install" data-a="install">' + I.download + '<span>Install the app</span></button>';
+      if (UI.installEvt) install = '<button class="install btn ghost" data-a="install">' + I.download + '<span>Install the app</span></button>';
       else if (iOS) install = '<div class="install-hint">' + I.download + '<span>To install: tap <b>Share</b>, then <b>Add to Home Screen</b>.</span></div>';
     }
     return '<div class="screen title-screen">' +
-      '<div class="title-sky"><div class="logo"><h1><span>Monsoon</span><span>Merchant</span></h1><p>Buy low. Sail far. Beat the wind.</p></div>' +
-      '<div class="title-scene" aria-hidden="true"><div class="sun"></div>' +
-      '<svg class="title-ship" viewBox="0 0 160 110"><path d="M22 78 L138 78 Q 134 92 118 98 L 40 98 Q 26 92 22 78 Z" fill="#0B1726"/><rect x="78" y="14" width="4" height="66" fill="#0B1726"/><rect x="50" y="34" width="3.5" height="46" fill="#0B1726"/><path d="M82 18 Q 108 28 120 42 L 116 76 L 82 76 Z" fill="#14294A" stroke="#F2B84B" stroke-width="2.5" stroke-linejoin="round"/><path d="M82 32 Q 102 36 118 40 M82 46 Q 102 50 118 52 M82 60 Q 102 64 117 64" stroke="#F2B84B" stroke-width="2" fill="none" opacity=".85"/><path d="M53 38 Q 70 44 77 56 L 75 76 L 53 76 Z" fill="#14294A" stroke="#F2B84B" stroke-width="2.2" stroke-linejoin="round"/><path d="M53 52 Q 65 55 76 58 M53 64 Q 65 67 75 68" stroke="#F2B84B" stroke-width="1.8" fill="none" opacity=".85"/></svg>' +
-      '<svg class="waves" viewBox="0 0 400 60" preserveAspectRatio="none"><path class="w1" d="M0 22 Q50 8 100 22 T200 22 T300 22 T400 22 T500 22 V60 H0Z"/><path class="w2" d="M0 34 Q50 22 100 34 T200 34 T300 34 T400 34 T500 34 V60 H0Z"/><path class="w3" d="M0 46 Q50 36 100 46 T200 46 T300 46 T400 46 T500 46 V60 H0Z"/></svg></div></div>' +
+      '<div class="title-top">' + sceneHTML('title', { mode: 'title', tod: 0.8, speed: 0.4 }, 'title-scene') +
+      '<div class="logo"><h1><span>Monsoon</span><span>Merchant</span></h1><p>Buy low. Sail far. Beat the wind.</p></div></div>' +
       '<div class="title-bottom"><div class="title-actions">' +
-      (storageWarning ? '<p class="warnline" role="status">Saving failed on this device. Copy a backup before closing the game.</p>' : '') +
       (UI.swWaiting ? '<button class="update" data-a="sw-update">' + I.spark + '<span>New version ready. <b>Tap to update</b></span></button>' : '') +
-      (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season</span><small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></button>' : '') +
-      '<button class="daily-card network-entry company-entry" data-a="network"><div class="dc-l">' + I.play + '</div><div class="dc-m"><b>Play Monsoon Company <span class="new-tag">UNIFIED</span></b><small>Captain · manufacture · ship · deliver · one campaign</small></div><span aria-hidden="true">→</span></button>' +
-      '<button class="btn ghost" data-a="new-season">' + I.play + '<span>Classic captain season</span></button>' +
+      (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season<small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></span></button>' : '') +
+      '<button class="btn ' + (normal ? 'ghost' : 'primary big') + '" data-a="new-season">' + I.play + '<span>New season</span></button>' +
       '<button class="daily-card" data-a="daily">' +
       '<div class="dc-l">' + I.calendar + '</div><div class="dc-m"><b>Daily Voyage</b><small>' + esc(prettyDate(key)) + (dailyLive ? ' · in progress, day ' + daily.day : dailyBest !== undefined ? ' · best ' + rm(dailyBest) : ' · same seas for everyone') + '</small></div>' +
       '<div class="dc-r ' + (streakNow > 0 ? 'live' : '') + '">' + I.flame + '<b>' + streakNow + '</b></div></button>' +
       '<div class="title-row">' +
       '<button class="tile" data-a="legacy">' + I.spark + '<span>Legacy</span><b>' + meta.lp + ' LP</b></button>' +
       '<button class="tile" data-a="ledger">' + I.trophy + '<span>Ledger</span><b>' + Object.keys(meta.ach).length + '/' + MM.ACH.length + '</b></button>' +
-      '<button class="tile" data-a="settings">' + I.gear + '<span>Settings</span><b>&nbsp;</b></button>' +
+      '<button class="tile" data-a="settings">' + I.gear + '<span>Settings</span><b>' + (meta.settings.music && meta.settings.sound ? 'Music on' : 'Quiet') + '</b></button>' +
       '</div>' + install +
       '</div><div class="version">v' + APP_VERSION + ' · ' + ('serviceWorker' in navigator && navigator.serviceWorker.controller ? 'works offline' : 'offline after first load') + '</div></div></div>';
   }
-
   function screenSetup() {
     const st = UI.setup;
     let h = '<div class="screen setup">' + topbar('New season') + '<main class="scroll">';
@@ -436,7 +214,7 @@
       const c = MM.CAPTAINS[id];
       const locked = c.unlock && !meta.unlocks[c.unlock];
       const cost = locked ? MM.UNLOCK_BY_ID[c.unlock].cost : 0;
-      h += '<button class="capt ' + (st.captain === id ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-capt" data-id="' + id + '" aria-pressed="' + (st.captain === id) + '">' + captAvatar(id, 46) +
+      h += '<button class="capt ' + (st.captain === id ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-capt" data-id="' + id + '">' + captAvatar(id, 52) +
         '<div><b>' + esc(c.name) + '</b><small>' + esc(c.title) + '</small><p>' + esc(c.desc) + '</p>' +
         (locked ? '<span class="lockline">' + I.lock + ' Unlock in Legacy · ' + cost + ' LP</span>' : '<span class="startline">Starts in ' + esc(pName(c.start)) + '</span>') + '</div></button>';
     });
@@ -444,7 +222,7 @@
     h += '<section><h3 class="sec">Monsoon level</h3><div class="levels">';
     for (let n = 0; n <= 10; n++) {
       const locked = n > meta.levelMax;
-      h += '<button class="lvl ' + (st.level === n ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-level" data-id="' + n + '" aria-label="Monsoon level ' + n + (locked ? ', locked' : '') + '" aria-pressed="' + (st.level === n) + '">' + (locked ? I.lock : n) + '</button>';
+      h += '<button class="lvl ' + (st.level === n ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-level" data-id="' + n + '">' + (locked ? I.lock : n) + '</button>';
     }
     h += '</div>';
     const mods = MM.LEVELS.slice(1, st.level + 1).map(l => l.desc);
@@ -453,7 +231,7 @@
     let cash = 50000 + (unl.perk_cash1 ? 25000 : 0) + (unl.perk_cash2 ? 50000 : 0) + (unl.perk_cash3 ? 100000 : 0);
     if (st.level >= 9) cash = Math.max(30000, cash - 20000);
     h += '<section class="setup-sum"><div><small>Starting cash</small><b>' + rm(cash) + '</b></div><div><small>Season</small><b>' + (st.level >= 5 ? 52 : 60) + ' days</b></div><div><small>Ship</small><b>Old Coaster</b></div></section>';
-    h += '</main><footer class="cta"><button class="btn primary big" data-a="start-season">' + I.play + '<span>Start season</span></button></footer></div>';
+    h += '</main><footer class="cta"><button class="btn primary big" data-a="start-season">' + I.play + '<span>Cast off</span></button></footer></div>';
     return h;
   }
 
@@ -470,10 +248,12 @@
   function portBanner(s) {
     const P = MM.PORTS[s.port];
     const prof = MM.portProfile(s.port, s.goods);
-    const fac = (P.bank ? '<span class="fac">' + I.bank + 'Bank</span>' : '') + (P.yard ? '<span class="fac">' + I.yard + 'Shipyard</span>' : '');
-    return '<section class="port-banner"><div class="pb-top"><h2>' + esc(P.name) + '</h2><span class="cc">' + P.cc + '</span>' + fac + '</div><p>' + esc(P.blurb) + '</p>' +
-      '<div class="profile">' + (prof.exports.length ? '<span class="lab">Cheap here</span>' + prof.exports.map(g => '<span class="mini" style="--c:' + GC[g] + '">' + esc(gName(g)) + '</span>').join('') : '') +
-      (prof.imports.length ? '<span class="lab">Pays well</span>' + prof.imports.map(g => '<span class="mini" style="--c:' + GC[g] + '">' + esc(gName(g)) + '</span>').join('') : '') + '</div></section>';
+    const night = s.day % 4 === 3;
+    const fac = (P.bank ? '<span class="fac">' + I.bank + 'Bank</span>' : '') + (P.yard ? '<span class="fac">' + I.yard + 'Yard</span>' : '');
+    return '<section class="port-banner"><div class="pb-art" style="background-image:url(' + PX.skylineURL(s.port, night) + ')"><div class="pb-name"><h2>' + esc(P.name) + '</h2><span class="cc">' + P.cc + '</span></div></div>' +
+      '<div class="pb-body"><div class="pb-fac">' + fac + '</div><p>' + esc(P.blurb) + '</p>' +
+      '<div class="profile">' + (prof.exports.length ? '<span class="lab">Cheap here</span>' + prof.exports.map(g => '<span class="mini">' + gIcon(g, 'xs') + esc(gName(g)) + '</span>').join('') : '') +
+      (prof.imports.length ? '<span class="lab">Pays well</span>' + prof.imports.map(g => '<span class="mini">' + gIcon(g, 'xs') + esc(gName(g)) + '</span>').join('') : '') + '</div></div></section>';
   }
   function lastDayBanner(s) {
     if (s.day < s.maxDays) {
@@ -488,12 +268,12 @@
     const evs = [];
     s.goods.forEach(g => MM.activeEvents(s, s.port, g).forEach(e => evs.push(e)));
     if (evs.length) {
-      h += '<div class="events">' + evs.map(e => '<div class="evline ' + e.kind + '">' + (e.kind === 'shortage' || e.kind === 'boom' ? I.up : I.down) + '<span>' + esc(e.headline) + '</span><small>until day ' + e.end + '</small></div>').join('') + '</div>';
+      h += '<div class="events">' + evs.map(e => '<div class="evline ' + e.kind + '">' + (e.rival ? I.sword : isUp(e.kind) ? I.up : I.down) + '<span>' + esc(e.headline) + '</span><small>until day ' + e.end + '</small></div>').join('') + '</div>';
     }
     h += '<ul class="goods">';
     MM.marketRows(s).forEach(r => {
       const tagCls = r.vsAvg <= -0.12 ? 'cheap' : r.vsAvg >= 0.12 ? 'dear' : 'flat';
-      const ev = r.events.length ? '<span class="evtag ' + r.events[0].kind + '">' + (r.events[0].kind === 'shortage' ? 'Shortage' : r.events[0].kind === 'glut' ? 'Glut' : r.events[0].kind === 'boom' ? 'Boom' : 'Slump') + '</span>' : '';
+      const ev = r.events.length ? '<span class="evtag ' + r.events[0].kind + '">' + EV_TAG[r.events[0].kind] + '</span>' : '';
       let sub;
       if (r.hold > 0) {
         const plc = r.pl >= 0 ? 'pos' : 'neg';
@@ -523,26 +303,19 @@
   function tabMap() {
     const s = run;
     let h = tip('map');
-    h += '<div class="map-box">' + mapSVG({ interactive: true, selected: UI.sheet && UI.sheet.type === 'port' ? UI.sheet.p : null }) +
-      '<div class="map-legend"><span><i class="lg here"></i>You</span><span><i class="lg dest"></i>Contract</span><span><i class="lg lane"></i>Sea lane</span><span class="windnote">' + I.wind + (s.monsoon.phase === 'NE' ? 'Northeast monsoon: fast southwest' : 'Southwest monsoon: fast northeast') + '</span></div></div>';
-    h += '<p class="center-note">Choose a port on the chart or from the list below.</p>';
-    h += '<section class="destinations"><h3 class="sec">Ports & voyages</h3><ul>' + MM.PORT_IDS.map(p => {
-      const here = p === s.port;
-      const available = s.ports.indexOf(p) >= 0;
-      const pl = available && !here ? MM.planVoyage(s, p) : null;
-      const detail = here ? 'You are here' : !available ? (s.mode === 'daily' ? 'Not in today’s voyage' : 'Unlock in Legacy') : plural(pl.days, 'day') + ' · arrive day ' + pl.arrive + (pl.tooLate ? ' · after season end' : ' · ' + rm(pl.cost) + ' running cost');
-      return '<li><button class="destination" data-a="port" data-p="' + p + '"><b>' + esc(pName(p)) + '</b><small>' + esc(detail) + '</small></button></li>';
-    }).join('') + '</ul></section>';
+    const sel = UI.sheet && UI.sheet.type === 'port' ? UI.sheet.p : null;
+    h += '<div class="map-box">' + mapHTML('main', { interactive: true, here: s.port, selected: sel, dests: s.contracts.map(c => c.dest), locked: lockedPorts(s), wind: s.monsoon.phase }) +
+      '<div class="map-legend"><span>' + I.anchor + 'You</span><span>' + I.star + 'Contract</span><span class="windnote">' + I.wind + (s.monsoon.phase === 'NE' ? 'NE monsoon: fast going southwest' : 'SW monsoon: fast going northeast') + '</span></div></div>';
+    h += '<p class="center-note">Tap a port to plan a voyage.</p>';
     h += priceBoard(s);
     return h;
   }
-
   function tabShip() {
     const s = run;
     const sh = MM.SHIPS[s.ship.cls];
     const cond = s.ship.cond;
     let h = tip('ship');
-    h += '<section class="shipcard"><div class="sc-top"><svg class="sc-art" viewBox="0 0 120 50"><path d="M6 30 L112 30 L100 44 L16 44 Z" fill="currentColor"/><rect x="30" y="18" width="40" height="12" fill="currentColor" opacity=".55"/><rect x="74" y="12" width="14" height="18" fill="currentColor" opacity=".8"/><path d="M80 12 V4" stroke="currentColor" stroke-width="3"/></svg>' +
+    h += '<section class="shipcard">' + sceneHTML('ship', { ship: s.ship.cls, mode: 'dock', tod: 0.45, speed: 0 }, 'ship-scene') + '<div class="sc-top">' +
       '<div><h3>' + esc(sh.name) + '</h3><p>' + esc(sh.desc) + '</p></div></div>' +
       '<div class="sc-stats"><div><small>Hold</small><b>' + num(sh.cap) + ' t</b></div><div><small>Speed</small><b>' + MM.shipSpeed(s).toFixed(1) + ' kn</b></div><div><small>Per day</small><b>' + rm(MM.dailyCost(s)) + '</b></div><div><small>Value</small><b>' + rm(MM.tradeIn(s)) + '</b></div></div>' +
       '<div class="cond"><div class="cond-top"><span>Hull condition</span><b class="' + (cond < 35 ? 'neg' : cond < 65 ? 'warn' : 'pos') + '">' + Math.round(cond) + '%</b></div><div class="bar"><i style="width:' + cond + '%" class="' + (cond < 35 ? 'neg' : cond < 65 ? 'warn' : 'pos') + '"></i></div>' +
@@ -571,7 +344,7 @@
       h += '<h4 class="sub">Ships for sale <small>trade-in ' + rm(MM.tradeIn(s)) + '</small></h4>';
       MM.shipOffers(s).forEach(o => {
         const up = o.cap > sh.cap;
-        h += '<div class="ship-offer"><div class="so-main"><b>' + esc(o.name) + '</b><small>' + esc(o.desc) + '</small><div class="so-stats"><span>' + num(o.cap) + ' t</span><span>' + o.speed + ' kn</span><span>' + rm(o.daily) + '/day</span>' + (o.cold ? '<span>Refrigerated</span>' : '') + '</div></div>' +
+        h += '<div class="ship-offer"><i class="sh sh-' + o.id + '"></i><div class="so-main"><b>' + esc(o.name) + '</b><small>' + esc(o.desc) + '</small><div class="so-stats"><span>' + num(o.cap) + ' t</span><span>' + o.speed + ' kn</span><span>' + rm(o.daily) + '/day</span>' + (o.cold ? '<span>Refrigerated</span>' : '') + '</div></div>' +
           '<button class="btn sm ' + (up ? 'primary' : '') + '" data-a="buy-ship" data-id="' + o.id + '" ' + (!o.fits || s.cash < o.net ? 'disabled' : '') + '>' + (o.net >= 0 ? rm(o.net) : '+' + rm(-o.net)) + '</button></div>';
       });
       h += '</section>';
@@ -580,30 +353,77 @@
   }
 
   function newsItem(s, n) {
-    const icon = n.kind === 'rumour' ? I.rumour : n.kind === 'monsoon' ? I.wind : n.kind === 'shortage' || n.kind === 'boom' ? I.up : n.kind === 'glut' || n.kind === 'bust' ? I.down : I.news;
+    const icon = n.kind === 'rumour' ? I.rumour : n.kind === 'monsoon' ? I.wind : n.kind === 'rival' ? I.sword : isUp(n.kind) ? I.up : n.kind === 'glut' || n.kind === 'bust' || n.kind === 'dump' ? I.down : I.news;
     const age = s.day - n.day;
     let tag = '';
     if (n.kind === 'rumour' && s.captain === 'kumar') tag = '<span class="src ' + n.tag + '">' + (n.tag === 'solid' ? 'Kumar: solid source' : 'Kumar: shaky source') + '</span>';
     if (n.kind === 'rumour') tag = '<span class="src rum">Rumour</span>' + tag;
     if (n.kind === 'forecast') tag = '<span class="src rum">Forecast</span>';
+    if (n.kind === 'rival' || n.kind === 'squeeze' || n.kind === 'dump') tag = '<span class="src riv">' + esc(MM.RIVAL.name) + '</span>';
     const live = n.ev && s.events.some(e => e.id === n.ev && s.day >= e.start && s.day <= e.end);
     return '<li class="news ' + n.kind + (n.id > (UI.prevSeen || 0) ? ' new' : '') + '">' + icon + '<div><p>' + esc(n.text) + '</p><small>' + (age <= 0 ? 'Today' : age === 1 ? 'Yesterday' : age + ' days ago') + (live ? ' · <b>happening now</b>' + (n.end ? ', until day ' + n.end : '') : '') + '</small>' + tag + '</div></li>';
+  }
+  function stepChart(series, w, h) {
+    // two stepped lines on a pixel grid: you (gold) vs the rival (red)
+    const all = series.reduce((a, x) => a.concat(x.pts), []);
+    if (all.length < 2) return '';
+    const x0 = Math.min.apply(null, all.map(p => p[0])), x1 = Math.max.apply(null, all.map(p => p[0]));
+    const y0 = Math.min(0, Math.min.apply(null, all.map(p => p[1]))), y1 = Math.max.apply(null, all.map(p => p[1]));
+    const X = x => Math.round(((x - x0) / Math.max(1, x1 - x0)) * (w - 4) + 2);
+    const Y = y => Math.round(h - 2 - ((y - y0) / Math.max(1, y1 - y0)) * (h - 4));
+    let out = '<svg class="steps" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" shape-rendering="crispEdges">';
+    for (let gy = 1; gy < 4; gy++) out += '<rect x="0" y="' + Math.round(h * gy / 4) + '" width="' + w + '" height="1" fill="#31508f"/>';
+    series.forEach(sr => {
+      let d = '';
+      sr.pts.forEach((p, i) => { const x = X(p[0]), y = Y(p[1]); d += i ? 'H' + x + 'V' + y : 'M' + x + ',' + y; });
+      out += '<path d="' + d + '" fill="none" stroke="#0b0a1a" stroke-width="4"/><path d="' + d + '" fill="none" stroke="' + sr.c + '" stroke-width="2"/>';
+    });
+    return out + '</svg>';
+  }
+  function raceCard(s, extra) {
+    const R = s.rival; if (!R) return '';
+    const nw = MM.netWorth(s), ahead = nw >= R.nw;
+    return '<section class="race ' + (ahead ? 'ahead' : 'behind') + '"><div class="race-top">' + captAvatar('lim', 44) + '<div><b>' + esc(MM.RIVAL.name) + '</b><small>' + esc(MM.RIVAL.desc) + '</small></div></div>' +
+      '<div class="race-nums"><div><small>You</small><b class="gold">' + rm(nw) + '</b></div><div><small>Lim</small><b class="red">' + rm(R.nw) + '</b></div><div><small>' + (ahead ? 'Lead' : 'Gap') + '</small><b class="' + (ahead ? 'pos' : 'neg') + '">' + rm(Math.abs(nw - R.nw)) + '</b></div></div>' +
+      stepChart([{ c: '#c63b3b', pts: R.hist }, { c: '#ffd65c', pts: s.hist }], 300, 70) +
+      '<p class="small dim">Finish the season worth more than him for bonus Legacy. Watch the news: when his junks load a cargo, a glut is coming where they unload.' + (extra || '') + '</p></section>';
+  }
+  function bountyList(s, end) {
+    const bs = s.bounties || []; if (!bs.length) return '';
+    return '<ul class="bounties">' + bs.map(b => '<li class="bounty ' + (b.done ? 'done' : b.failed ? 'failed' : '') + '">' + (b.done ? I.check : b.failed ? I.close : I.scroll) + '<div><b>' + esc(b.text) + '</b><small>' + (b.done ? 'Done on day ' + b.doneDay : b.failed ? 'Missed' : bountyProgress(s, b)) + '</small></div><span class="lp">+' + b.lp + '</span></li>').join('') + '</ul>' + (end ? '' : '<p class="small dim">Bounties pay Legacy at the end of the season.</p>');
+  }
+  function bountyProgress(s, b) {
+    const P = b.p;
+    switch (b.type) {
+      case 'deliver': return 'Sold ' + num(((s.st.sold[P.port] || {})[P.g]) || 0) + ' of ' + num(P.q) + ' t · ' + plural(Math.max(0, P.day - s.day), 'day') + ' left';
+      case 'ports': return Object.keys(s.st.visited).length + ' of ' + P.n + ' ports';
+      case 'bigsale': return 'Best sale so far ' + rm(s.st.maxSale);
+      case 'profit': return 'Best profit so far ' + rm(Math.max(0, s.st.bestTrade));
+      case 'contracts': return s.st.contracts + ' of ' + P.n + ' delivered';
+      case 'nwby': return 'Worth ' + rm(MM.netWorth(s)) + ' · ' + plural(Math.max(0, P.day - s.day), 'day') + ' left';
+      case 'hull': return 'Hull now ' + Math.round(s.ship.cond) + '%';
+      case 'rivalby': return 'Checked on day ' + P.day;
+      case 'nodebt': return 'So far, so good';
+    }
+    return '';
   }
   function tabOffice() {
     const s = run;
     const P = MM.PORTS[s.port];
     let h = tip('office');
+    h += '<section><h3 class="sec">Bounties <small>this season</small></h3>' + bountyList(s) + '</section>';
+    h += '<section><h3 class="sec">The race</h3>' + raceCard(s) + '</section>';
     // Contracts
     h += '<section><h3 class="sec">Contracts <small>' + s.contracts.length + '/2 active</small></h3>';
     if (!s.contracts.length && !s.offers.length) h += '<p class="empty">No contracts on offer here today.</p>';
     s.contracts.forEach(k => {
       const have = s.cargo[k.good] ? s.cargo[k.good].q : 0;
       const left = k.deadline - s.day;
-      h += '<div class="contract active">' + gIcon(k.good, 'sm') + '<div><b>' + num(k.qty) + ' t ' + esc(gName(k.good)) + ' → ' + esc(pName(k.dest)) + '</b><small>Pays ' + num(k.pay) + '/t = <b>' + rm(k.qty * k.pay) + '</b> · due day ' + k.deadline + ' (' + (left >= 0 ? plural(left, 'day') + ' left' : 'late') + ')</small><small class="' + (have >= k.qty ? 'pos' : 'dim') + '">Aboard: ' + num(have) + '/' + num(k.qty) + ' t · penalty if missed ' + rm(k.penalty) + '</small></div></div>';
+      h += '<div class="contract active">' + gIcon(k.good, 'sm') + '<div><b>' + num(k.qty) + ' t ' + esc(gName(k.good)) + ' » ' + esc(pName(k.dest)) + '</b><small>Pays ' + num(k.pay) + '/t = <b>' + rm(k.qty * k.pay) + '</b> · due day ' + k.deadline + ' (' + (left >= 0 ? plural(left, 'day') + ' left' : 'late') + ')</small><small class="' + (have >= k.qty ? 'pos' : 'dim') + '">Aboard: ' + num(have) + '/' + num(k.qty) + ' t · penalty if missed ' + rm(k.penalty) + '</small></div></div>';
     });
     s.offers.forEach(o => {
       const norm = MM.GOODS[o.good].base * MM.PF[o.dest][o.good];
-      h += '<div class="contract">' + gIcon(o.good, 'sm') + '<div><b>' + num(o.qty) + ' t ' + esc(gName(o.good)) + ' → ' + esc(pName(o.dest)) + '</b><small>Pays ' + num(o.pay) + '/t (' + pct(o.pay / norm - 1) + ' on usual) = <b>' + rm(o.qty * o.pay) + '</b></small><small>Deliver by day ' + o.deadline + ' · penalty ' + rm(o.penalty) + '</small></div><button class="btn sm primary" data-a="accept" data-id="' + o.id + '" ' + (s.contracts.length >= 2 ? 'disabled' : '') + '>Accept</button></div>';
+      h += '<div class="contract">' + gIcon(o.good, 'sm') + '<div><b>' + num(o.qty) + ' t ' + esc(gName(o.good)) + ' » ' + esc(pName(o.dest)) + '</b><small>Pays ' + num(o.pay) + '/t (' + pct(o.pay / norm - 1) + ' on usual) = <b>' + rm(o.qty * o.pay) + '</b></small><small>Deliver by day ' + o.deadline + ' · penalty ' + rm(o.penalty) + '</small></div><button class="btn sm primary" data-a="accept" data-id="' + o.id + '" ' + (s.contracts.length >= 2 ? 'disabled' : '') + '>Accept</button></div>';
     });
     h += '</section>';
     // Money
@@ -634,16 +454,14 @@
   function screenSea() {
     const s = run;
     const v = s.voyage;
-    const vb = seaViewBox(v.from, v.to);
-    const logs = s.log.filter(l => l.day > v.startDay).slice(0, 6);
+    const logs = s.log.filter(l => l.day > v.startDay).slice(0, 5);
     return '<div class="screen sea">' + hud() +
-      '<div class="sea-map">' + mapSVG({ viewBox: vb, route: { from: v.from, to: v.to }, ship: true }) +
-      '<div class="voyage-pill"><b>' + esc(pShort(v.from)) + ' → ' + esc(pShort(v.to)) + '</b><span>Day ' + Math.min(v.idx, v.days) + ' of ' + v.days + (v.insured ? ' · insured' : '') + '</span></div></div>' +
-      '<div class="sea-bottom"><ul class="sealog">' + (logs.length ? logs.map(l => '<li class="' + l.kind + '"><small>Day ' + l.day + '</small><span>' + esc(l.text) + '</span></li>').join('') : '<li class="calm"><span>Fair winds. The crew settle into watches.</span></li>') + '</ul>' +
-      tip('sea') +
-      '<div class="sea-actions"><button class="btn ghost ' + (UI.sea.fast ? 'on' : '') + '" data-a="sea-fast">' + I.fast + '<span>' + (UI.sea.fast ? 'Fast' : 'Normal speed') + '</span></button></div></div></div>';
+      '<div class="sea-view">' + sceneHTML('sea', { ship: s.ship.cls, mode: 'sail', event: s.pending ? s.pending.type : null, rival: true, speed: UI.sea.fast ? 2 : 1 }, 'sea-scene') +
+      '<div class="voyage-pill"><b>' + esc(pShort(v.from)) + ' » ' + esc(pShort(v.to)) + '</b><span>Day ' + Math.min(v.idx, v.days) + ' of ' + v.days + (v.insured ? ' · insured' : '') + '</span></div></div>' +
+      '<div class="sea-bottom"><div class="sea-mini">' + mapHTML('sea', { route: { from: v.from, to: v.to }, ship: true, frac: UI.sea.frac, locked: lockedPorts(s), wind: s.monsoon.phase, labels: false }) + '</div>' +
+      '<div class="sea-side"><ul class="sealog">' + (logs.length ? logs.map(l => '<li class="' + l.kind + '"><small>Day ' + l.day + '</small><span>' + esc(l.text) + '</span></li>').join('') : '<li class="calm"><span>Fair winds. The crew settle into watches.</span></li>') + '</ul>' +
+      '<button class="btn ghost sm ' + (UI.sea.fast ? 'on' : '') + '" data-a="sea-fast">' + I.fast + '<span>' + (UI.sea.fast ? 'Fast' : 'Normal') + '</span></button></div></div>' + tip('sea') + '</div>';
   }
-
   function sparkline(hist, w, h) {
     if (!hist || hist.length < 2) return '';
     const xs = hist.map(p => p[0]), ys = hist.map(p => p[1]);
@@ -662,15 +480,18 @@
     h += '<section class="end-hero rank-' + R.id + '"><small>' + (s.sunk ? 'Shipwrecked on day ' + s.day : s.mode === 'daily' ? 'Daily Voyage · ' + esc(prettyDate(s.dateKey)) : 'Season complete') + '</small><div class="stamp">' + esc(R.name) + '</div>' +
       '<div class="end-nw"><small>Final net worth</small><b>' + rm(f.nw) + '</b>' + (f.personalBest ? '<span class="pb">' + I.star + 'Personal best</span>' : '') + '</div>' +
       (next ? '<p class="next">' + esc(next.name) + ' at ' + rm(next.min) + '</p>' : '<p class="next">The top rank. Legendary.</p>') + '</section>';
-    h += '<section class="chart-card"><h3 class="sec">Net worth by day</h3>' + sparkline(s.hist.filter(p => p[0] < s.day).concat([[s.day, f.nw]]), 340, 90) + '</section>';
+    h += '<section class="race ' + (f.beatRival ? 'ahead' : 'behind') + ' end-race"><div class="race-top">' + captAvatar('lim', 44) + '<div><b>' + (f.beatRival ? 'You beat ' + esc(MM.RIVAL.name) + '!' : esc(MM.RIVAL.name) + ' wins this one') + '</b><small>He finished on ' + rm(f.rivalNW) + '. You: ' + rm(f.nw) + '.</small></div></div>' +
+      stepChart([{ c: '#c63b3b', pts: s.rival.hist }, { c: '#ffd65c', pts: s.hist.filter(p => p[0] < s.day).concat([[s.day, f.nw]]) }], 300, 80) + '</section>';
+    h += '<section><h3 class="sec">Bounties</h3>' + bountyList(s, true) + '</section>';
     h += '<section class="breakdown"><div><small>Cash</small><b>' + rm(f.cash - f.sold) + '</b></div><div><small>Cargo sold at the end</small><b>' + rm(f.sold) + '</b></div><div><small>Ship at trade-in</small><b>' + rm(f.ship) + '</b></div><div><small>Debts</small><b class="' + (f.debts > 0 ? 'neg' : '') + '">' + (f.debts > 0 ? '−' : '') + rm(f.debts) + '</b></div></section>';
     const st = s.st;
     h += '<section class="statgrid"><div><b>' + st.voyages + '</b><small>voyages</small></div><div><b>' + st.trades + '</b><small>trades</small></div><div><b>' + rm(st.bestTrade) + '</b><small>best trade</small></div><div><b>' + st.contracts + '</b><small>contracts</small></div><div><b>' + st.storms + '</b><small>storms</small></div><div><b>' + st.pirates + '</b><small>pirate run-ins</small></div></section>';
     h += '<section class="lp-card"><div class="lp-big">' + I.spark + '<b>+' + (f.lp + f.newAch.reduce((a, x) => a + x.lp, 0)) + '</b><span>Legacy points</span></div><ul>' +
       '<li><span>Season result' + (s.level ? ' ×' + (1 + 0.2 * s.level).toFixed(1) : '') + '</span><b>+' + f.lpBase + '</b></li>' +
       (f.streakBonus ? '<li><span>Daily streak bonus</span><b>+' + f.streakBonus + '</b></li>' : '') +
+      (f.rivalLP ? '<li><span>' + I.sword + 'Beat ' + esc(MM.RIVAL.name) + '</span><b>+' + f.rivalLP + '</b></li>' : '') +
+      (f.bountyLP ? '<li><span>' + I.scroll + 'Bounties</span><b>+' + f.bountyLP + '</b></li>' : '') +
       f.newAch.map(a => '<li class="ach"><span>' + I.star + esc(a.name) + '</span><b>+' + a.lp + '</b></li>').join('') + '</ul>' +
-      (f.rewardNote ? '<p class="reward-note">' + esc(f.rewardNote) + '</p>' : '') +
       (f.levelUp ? '<p class="lvlup">' + I.up + 'Monsoon level ' + f.levelUp + ' unlocked</p>' : '') + '</section>';
     h += '</main><footer class="cta stack"><button class="btn primary big" data-a="' + (s.mode === 'daily' ? 'go-title' : 'new-season') + '">' + I.play + '<span>' + (s.mode === 'daily' ? 'Done' : 'Sail another season') + '</span></button><div class="cta-row"><button class="btn ghost" data-a="go-title">Title</button><button class="btn" data-a="legacy">' + I.spark + '<span>Legacy · ' + meta.lp + '</span></button></div></footer></div>';
     return h;
@@ -716,13 +537,13 @@
 
   function screenSettings() {
     const st = meta.settings;
-    const tog = (k, label, sub) => '<button class="toggle-row" data-a="toggle" data-id="' + k + '" role="switch" aria-checked="' + !!st[k] + '"><div><b>' + label + '</b><small>' + sub + '</small></div><span class="switch ' + (st[k] ? 'on' : '') + '" aria-hidden="true"><i></i></span></button>';
+    const tog = (k, label, sub) => '<button class="toggle-row" data-a="toggle" data-id="' + k + '"><div><b>' + label + '</b><small>' + sub + '</small></div><span class="switch ' + (st[k] ? 'on' : '') + '"><i></i></span></button>';
     let h = '<div class="screen settings">' + topbar('Settings') + '<main class="scroll">';
-    h += '<section class="group">' + tog('sound', 'Sound', 'Little chimes and creaks.') + tog('haptics', 'Vibration', 'Android only. iPhones don’t allow it in web apps.') + tog('motion', 'Animations', 'Turn off for a calmer screen.') + tog('tips', 'Tips', 'Show beginner hints.') + '</section>';
+    h += '<section class="group">' + tog('sound', 'Sound', 'Chiptune bleeps and bloops.') + tog('music', 'Music', 'A sea shanty on loop.') + tog('haptics', 'Vibration', 'Android only. iPhones don’t allow it in web apps.') + tog('motion', 'Animations', 'Turn off for a calmer screen.') + tog('tips', 'Tips', 'Show beginner hints.') + '</section>';
     h += '<section class="group"><button class="link-row" data-a="help">' + I.help + '<span>How to play</span></button><button class="link-row" data-a="reset-tips">' + I.info + '<span>Show all tips again</span></button></section>';
-    h += '<section class="group"><h3 class="sec">Captain backup</h3><p class="small dim">Copy your captain seasons, Daily Voyage and Legacy to keep them safe. Monsoon Company has its own Backup button inside that mode.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
-      (UI.importOpen ? '<label for="importBox">Backup code</label><textarea id="importBox" placeholder="Paste a backup code here"></textarea><button class="btn sm primary" data-a="import">Restore from code</button>' : '') + '</section>';
-    h += '<section class="group"><button class="link-row danger" data-a="reset">' + I.close + '<span>Erase captain progress</span></button></section>';
+    h += '<section class="group"><h3 class="sec">Backup</h3><p class="small dim">Your progress lives on this device. Copy a backup code to keep it safe or move it to another phone.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
+      (UI.importOpen ? '<textarea id="importBox" placeholder="Paste a backup code here"></textarea><button class="btn sm primary" data-a="import">Restore from code</button>' : '') + '</section>';
+    h += '<section class="group"><button class="link-row danger" data-a="reset">' + I.close + '<span>Erase all progress</span></button></section>';
     h += '<p class="about">Monsoon Merchant v' + APP_VERSION + '. Made for offline play. No ads, no accounts, no tracking.</p>';
     h += '</main></div>';
     return h;
@@ -732,13 +553,15 @@
     const sec = (t, b) => '<section class="help-sec"><h3>' + t + '</h3>' + b + '</section>';
     let h = '<div class="screen help">' + topbar('How to play', UI.helpBack || 'settings') + '<main class="scroll">';
     h += sec('The goal', '<p>You have one season (60 days) to turn an old coaster and RM 50,000 into as much as you can. Your final <b>net worth</b> is cash + cargo + your ship (at trade-in value) − debts.</p><p>Ranks: Deckhand, Bosun (RM 200k), Trader (600k), Merchant (1.5M), Towkay (4M), Tycoon (10M), Legend of the Straits (25M).</p>');
-    h += sec('Trading', '<p>Each port makes some goods cheaply and pays well for others. Buy where it’s cheap, sail, sell where it’s dear. The % tag compares a price with the regional average.</p><p>Big trades move prices: buying pushes the price up, selling pushes it down. It recovers over a few days. Spread big cargoes across several ports and goods.</p>');
+    h += sec('Trading', '<p>Each port makes some goods cheaply and pays well for others. Buy where it’s cheap, sail, sell where it’s dear. The % tag compares a price with the regional average.</p><p>Big trades move prices: buying pushes the price up, selling pushes it down. Markets remember: a port you flood stays cheap for about a week. Rotate your routes.</p>');
     h += sec('What you know', '<p>You only see live prices in the port you’re in. For other ports you see the prices from your last visit or <b>market report</b>, which can be days old. The Radio room upgrade gives live prices everywhere.</p>');
     h += sec('Rumours and news', '<p>Shortages and gluts are often rumoured a few days before they hit. Get there while it’s happening for big profits. Some rumours are false.</p>');
     h += sec('The monsoon', '<p>The northeast monsoon speeds ships sailing southwest; the southwest monsoon speeds ships sailing northeast. Around mid-season the monsoon turns, and routes that were quick become slow. The weeks around the change bring squalls, and the southwest monsoon brings typhoons to the South China Sea.</p>');
-    h += sec('Risk', '<p>Storms and pirates can cost you cargo. Insurance pays back 80% of what you lose. Storms also damage the hull. Repair it at a shipyard, because at 0% she sinks.</p>');
+    h += sec('Risk', '<p>Storms and pirates can cost you cargo. Insurance pays back 80% of what you lose. Storms also damage the hull. Below 40% a storm can sink her outright, so repair at a shipyard.</p>');
+    h += sec('The rival', '<p><b>Towkay Lim</b> trades the same seas. His net worth is shown under yours. When his junks load a cargo, the price there jumps, and a few days later he floods the port where he unloads. Beat him by the end of the season for bonus Legacy.</p>');
+    h += sec('Bounties', '<p>Each season comes with three bounties, like selling a cargo in a certain port by a deadline. Each one you complete pays Legacy at the end of the season. Find them in the Office.</p>');
     h += sec('Money', '<p>Contracts pay a premium for delivering by a deadline. Miss it and you pay a penalty. Banks lend at about 0.25% a day at big ports. The Ah Long lends anywhere at 3% a day and wants it back within 10 days.</p>');
-    h += sec('Legacy', '<p>Season Legacy requires a completed voyage (shipwrecks count) and scales with days played; eligible runs earn at least 1 LP. Spend Legacy on new captains, ports, cargo, ships and perks. Finish as Merchant or better to unlock harder Monsoon levels, which earn more Legacy.</p><p>The <b>Daily Voyage</b> uses the same seas for everyone each day. Play it daily to build a streak.</p>');
+    h += sec('Legacy', '<p>Every season earns Legacy points. Spend them on new captains, ports, cargo, ships and perks. Finish as Merchant or better to unlock harder Monsoon levels, which earn more Legacy.</p><p>The <b>Daily Voyage</b> uses the same seas for everyone each day. Play it daily to build a streak.</p>');
     h += '</main></div>';
     return h;
   }
@@ -770,10 +593,9 @@
       const best = MM.bestKnownSell(s, g, s.port);
       const contract = s.contracts.find(k => k.good === g);
       facts = '<dl class="facts"><div><dt>Average price</dt><dd>' + (q ? num(qt.avg) : '—') + '</dd></div><div><dt>You receive</dt><dd><b>' + rm(qt.total) + '</b></dd></div>' +
-        '<div><dt>Trading profit</dt><dd class="' + (profit >= 0 ? 'pos' : 'neg') + '">' + (profit >= 0 ?  '+' : '') + rm(profit) + (cost ? ' <span>' + pct(q ? qt.avg / cost - 1 : 0) + '</span>' : '') + '</dd></div>' +
+        '<div><dt>Profit</dt><dd class="' + (profit >= 0 ? 'pos' : 'neg') + '">' + (profit >= 0 ? '+' : '') + rm(profit) + (cost ? ' <span>' + pct(q ? qt.avg / cost - 1 : 0) + '</span>' : '') + '</dd></div>' +
         '<div><dt>Price after</dt><dd>' + num(qt.after) + ' <span class="' + (qt.move > 0.1 ? 'neg' : 'dim') + '">−' + (qt.move * 100).toFixed(1) + '%</span></dd></div>' +
         (best ? '<div><dt>Best known elsewhere</dt><dd>' + esc(pShort(best.port)) + ' ' + num(best.price) + ' <i class="' + ageClass(best.age) + '">' + ageLabel(best.age) + '</i></dd></div>' : '') + '</dl>';
-      facts += '<p class="small dim">Trading profit is sale proceeds minus cargo purchase cost. Voyage costs, fees, interest and insurance are separate.</p>';
       if (contract) facts += '<p class="warnline">' + I.info + 'You have a contract for ' + num(contract.qty) + ' t of this to ' + esc(pName(contract.dest)) + '.</p>';
       btn = '<button class="btn primary big" data-a="do-trade" ' + (q <= 0 || q > hold ? 'disabled' : '') + '>Sell ' + num(q) + ' t · ' + rm(qt.total) + '</button>';
     }
@@ -785,8 +607,8 @@
     const max = sh.mode === 'buy' ? MM.maxBuy(s, g) : hold;
     const r = MM.marketRows(s).find(x => x.g === g);
     const head = '<header class="sh-head">' + gIcon(g) + '<div><h3>' + esc(gName(g)) + '</h3><small>Buy ' + num(r.buy) + ' · Sell ' + num(r.sell) + ' · regional avg ' + num(MM.GOODS[g].base) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
-    const seg = '<div class="seg"><button class="' + (sh.mode === 'buy' ? 'on' : '') + '" data-a="trade-mode" data-id="buy" aria-pressed="' + (sh.mode === 'buy') + '">Buy</button><button class="' + (sh.mode === 'sell' ? 'on' : '') + '" data-a="trade-mode" data-id="sell" aria-pressed="' + (sh.mode === 'sell') + '" ' + (hold ? '' : 'disabled') + '>Sell' + (hold ? ' (' + num(hold) + ' t)' : '') + '</button></div>';
-    const qty = '<div class="qty"><button class="qbtn" data-a="qty" data-d="-10" aria-label="Decrease quantity by 10 tonnes">−10</button><button class="qbtn" data-a="qty" data-d="-1" aria-label="Decrease quantity by 1 tonne">' + I.minus + '</button><div class="qval"><b id="qVal">' + num(sh.q) + '</b><small>tonnes</small></div><button class="qbtn" data-a="qty" data-d="1" aria-label="Increase quantity by 1 tonne">' + I.plus + '</button><button class="qbtn" data-a="qty" data-d="10" aria-label="Increase quantity by 10 tonnes">+10</button></div>' +
+    const seg = '<div class="seg"><button class="' + (sh.mode === 'buy' ? 'on' : '') + '" data-a="trade-mode" data-id="buy">Buy</button><button class="' + (sh.mode === 'sell' ? 'on' : '') + '" data-a="trade-mode" data-id="sell" ' + (hold ? '' : 'disabled') + '>Sell' + (hold ? ' (' + num(hold) + ' t)' : '') + '</button></div>';
+    const qty = '<div class="qty"><button class="qbtn" data-a="qty" data-d="-10">−10</button><button class="qbtn" data-a="qty" data-d="-1">' + I.minus + '</button><div class="qval"><b id="qVal">' + num(sh.q) + '</b><small>tonnes</small></div><button class="qbtn" data-a="qty" data-d="1">' + I.plus + '</button><button class="qbtn" data-a="qty" data-d="10">+10</button></div>' +
       '<input type="range" id="qRange" min="0" max="' + max + '" step="1" value="' + Math.min(sh.q, max) + '" data-a="qty-range" aria-label="Quantity">' +
       '<div class="quick"><button data-a="qty-set" data-f=".25">¼</button><button data-a="qty-set" data-f=".5">½</button><button data-a="qty-set" data-f=".75">¾</button><button data-a="qty-set" data-f="1">' + (sh.mode === 'buy' ? 'Max ' + num(max) : 'All ' + num(max)) + '</button></div>';
     return sheetWrap(head + seg + qty + '<div id="tradeDyn">' + tradeDyn() + '</div>', 'trade');
@@ -853,16 +675,9 @@
     if (s.ship.cond < 35) warns.push('Your hull is at ' + Math.round(s.ship.cond) + '%. A bad storm could sink her.');
     if (MM.cargoUsed(s) === 0) warns.push('Your hold is empty.');
     if (s.cash - (ins ? pl.premium : 0) < pl.cost) warns.push('Running costs (' + rm(pl.cost) + ') will push your cash below zero. Overdrafts cost 1% a day.');
-    s.contracts.forEach(c => {
-      if (pl.arrive > c.deadline) warns.push('Contract for ' + num(c.qty) + ' t ' + gName(c.good) + ' to ' + pName(c.dest) + ' is due day ' + c.deadline + '. This voyage arrives on day ' + pl.arrive + ', after its deadline.');
-      if (c.dest === p) {
-        const held = s.cargo[c.good] ? s.cargo[c.good].q : 0;
-        if (held < c.qty) warns.push('Contract at ' + pName(p) + ' needs ' + num(c.qty) + ' t ' + gName(c.good) + '; you carry ' + num(held) + ' t. Load ' + num(c.qty - held) + ' t more to deliver it on arrival.');
-      }
-    });
     let h = '<header class="sh-head"><span class="ul-ic">' + I.ship + '</span><div><h3>Sail to ' + esc(pName(p)) + '</h3><small>' + plural(pl.days, 'day') + ' · arrive day ' + pl.arrive + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
     h += '<dl class="facts"><div><dt>Running cost</dt><dd>' + rm(pl.cost) + '</dd></div><div><dt>Port fee on arrival</dt><dd>' + rm(MM.portFee(s)) + '</dd></div><div><dt>Storms / pirates</dt><dd><b class="risk ' + pl.stormLabel.toLowerCase() + '">' + pl.stormLabel + '</b> / <b class="risk ' + pl.pirateLabel.toLowerCase() + '">' + pl.pirateLabel + '</b></dd></div><div><dt>Cargo value (cost)</dt><dd>' + rm(pl.cargoValue) + '</dd></div></dl>';
-    if (pl.premium > 0) h += '<button class="toggle-row ins" data-a="toggle-ins" role="switch" aria-checked="' + !!ins + '"><div><b>Insure the cargo · ' + rm(pl.premium) + '</b><small>Pays back 80% of any cargo lost to storms or pirates on this voyage.</small></div><span class="switch ' + (ins ? 'on' : '') + '" aria-hidden="true"><i></i></span></button>';
+    if (pl.premium > 0) h += '<button class="toggle-row ins" data-a="toggle-ins"><div><b>Insure the cargo · ' + rm(pl.premium) + '</b><small>Pays back 80% of any cargo lost to storms or pirates on this voyage.</small></div><span class="switch ' + (ins ? 'on' : '') + '"><i></i></span></button>';
     if (warns.length) h += '<ul class="warns">' + warns.map(w => '<li>' + I.info + '<span>' + esc(w) + '</span></li>').join('') + '</ul>';
     h += '<button class="btn primary big" data-a="cast-off" data-p="' + p + '">' + I.ship + '<span>Cast off</span></button>';
     return sheetWrap(h, 'depart');
@@ -876,10 +691,10 @@
     const s = run;
     const row = (a, icon, label, sub, cls) => '<button class="link-row ' + (cls || '') + '" data-a="' + a + '">' + icon + '<span>' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span></button>';
     return sheetWrap('<header class="sh-head"><span class="ul-ic">' + I.anchor + '</span><div><h3>' + (s.mode === 'daily' ? 'Daily Voyage' : 'Season') + '</h3><small>Day ' + s.day + ' of ' + s.maxDays + ' · ' + esc(MM.CAPTAINS[s.captain].name) + (s.mode === 'daily' ? '' : ' · level ' + s.level) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>' +
-      '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Save your voyage to pick it up later.') +
-      row('export', I.download, 'Copy backup code', 'Backs up captain seasons, Daily Voyage and Legacy. Monsoon Company uses its own Backup button.') +
+      '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Your voyage is saved. Pick it up any time.') +
       row('help-run', I.help, 'How to play', '') +
       row('toggle-sound', I.sound, 'Sound: ' + (meta.settings.sound ? 'on' : 'off'), '') +
+      row('toggle-music', I.music, 'Music: ' + (meta.settings.music ? 'on' : 'off'), '') +
       (s.phase === 'port' && !s.pending ? row('end-early', I.flag, 'End season now', 'Sell up here and score the season.', 'danger') : '') + '</div>', 'menu');
   }
   function infoSheet() {
@@ -889,17 +704,18 @@
 
   function eventModal() {
     const e = run.pending;
-    const ic = I[EV_ICON[e.type]] || I.info;
-    return modalWrap('<div class="ev-art ev-' + e.type + '">' + ic + '</div><h3>' + esc(e.title) + '</h3><p>' + esc(e.text) + '</p><div class="choices">' +
+    const who = EV_SPEAKER[e.type] || 'Bosun';
+    return modalWrap(sceneHTML('ev', { ship: run.ship.cls, mode: e.type === 'customs' ? 'dock' : 'sail', event: e.type, port: run.port, rival: false }, 'ev-scene') +
+      '<div class="dialog"><div class="speaker">' + captAvatar(run.captain, 40) + '<span>' + esc(who) + '</span></div><h3>' + esc(e.title) + '</h3><p>' + esc(e.text) + '</p></div><div class="choices">' +
       e.choices.map(c => '<button class="choice" data-a="choose" data-id="' + c.id + '" ' + (c.disabled ? 'disabled' : '') + '><b>' + esc(c.label) + '</b>' + (c.sub ? '<small>' + esc(c.sub) + '</small>' : '') + '</button>').join('') + '</div>', 'event ev-' + e.type);
   }
   function resultModal() {
     const m = UI.modal;
-    return modalWrap('<div class="ev-art ' + m.tone + '">' + (m.tone === 'good' ? I.check : m.tone === 'bad' ? I.info : I[EV_ICON[m.evType]] || I.info) + '</div><h3>' + esc(m.title) + '</h3><p>' + esc(m.text) + '</p><button class="btn primary big" data-a="result-ok">Continue</button>', 'result ' + m.tone);
+    return modalWrap('<div class="ev-art ' + m.tone + '">' + (m.tone === 'good' ? I.check : m.tone === 'bad' ? I.skull : I[EV_ICON[m.evType]] || I.info) + '</div><div class="dialog"><h3>' + esc(m.title) + '</h3><p>' + esc(m.text) + '</p></div><button class="btn primary big" data-a="result-ok">Continue</button>', 'result ' + m.tone);
   }
   function arrivalModal() {
     const r = UI.modal.rep, s = run;
-    let h = '<div class="ev-art arrive">' + I.anchor + '</div><h3>' + esc(pName(r.port)) + '</h3><p class="sub">Day ' + r.day + ' · port fee ' + rm(r.fee) + '</p>';
+    let h = sceneHTML('arr', { ship: s.ship.cls, mode: 'dock', event: 'arrival', port: r.port, tod: s.day % 4 === 3 ? 0.95 : 0.45 }, 'ev-scene') + '<h3>' + esc(pName(r.port)) + '</h3><p class="sub">Day ' + r.day + ' · port fee ' + rm(r.fee) + '</p>';
     if (r.delivered.length) h += '<ul class="arr-list">' + r.delivered.map(d => '<li class="pos">' + I.check + '<span>Contract delivered: ' + num(d.qty) + ' t ' + esc(gName(d.good)) + ' for <b>' + rm(d.pay) + '</b></span></li>').join('') + '</ul>';
     if (r.lines.length) h += '<ul class="arr-list">' + r.lines.map(l => '<li>' + I.info + '<span>' + esc(l) + '</span></li>').join('') + '</ul>';
     const ev = [];
@@ -913,34 +729,12 @@
     return modalWrap(h, 'arrival');
   }
   function sunkModal() {
-    return modalWrap('<div class="ev-art bad">' + I.storm + '</div><h3>She’s gone down</h3><p>' + esc(UI.modal.text) + '</p><button class="btn primary big" data-a="finish">Count what’s left</button>', 'result bad');
+    return modalWrap(sceneHTML('sunk', { ship: run ? run.ship.cls : 'coaster', mode: 'dock', event: 'storm' }, 'ev-scene sunk-scene') + '<h3>She’s gone down</h3><p>' + esc(UI.modal.text) + '</p><button class="btn primary big" data-a="finish">Count what’s left</button>', 'result bad');
   }
 
   /* ================= Render ================= */
-  let overlayReturnFocus = null;
-  function focusBookmark(el) {
-    if (!el || (!el.id && !el.dataset.a)) return null;
-    return { id: el.id, tag: el.tagName, data: Object.assign({}, el.dataset) };
-  }
-  function findFocus(host, bookmark) {
-    if (!bookmark) return null;
-    if (bookmark.id) {
-      const el = document.getElementById(bookmark.id);
-      if (el && host.contains(el) && !el.disabled) return el;
-    }
-    return Array.from(host.querySelectorAll('[data-a]')).find(el => !el.disabled && el.tagName === bookmark.tag && Object.keys(bookmark.data).every(k => el.dataset[k] === bookmark.data[k])) || null;
-  }
-  function focusWithin(host, bookmark) {
-    const target = findFocus(host, bookmark) || host.querySelector('h1, h2, h3') || host;
-    if (!target.matches('button, input, textarea, select, a[href], [tabindex]')) target.tabIndex = -1;
-    target.focus({ preventScroll: true });
-  }
-  function renderOverlay(screenFocus) {
+  function renderOverlay() {
     const host = document.getElementById('overlay'); if (!host) return;
-    const screenHost = document.getElementById('screen');
-    const wasOpen = !!host.querySelector('[role="dialog"]');
-    const previousFocus = host.contains(document.activeElement) ? focusBookmark(document.activeElement) : null;
-    const trigger = screenHost.contains(document.activeElement) ? focusBookmark(document.activeElement) : screenFocus;
     let h = '';
     if (UI.modal) {
       if (UI.modal.type === 'result') h = resultModal();
@@ -955,28 +749,13 @@
       else if (UI.sheet.type === 'info') h = infoSheet();
       else if (UI.sheet.type === 'menu') h = menuSheet();
     }
+    unmount(UI.owidgets);
     host.innerHTML = h;
     host.className = h ? 'open' : '';
-    screenHost.inert = !!h;
-    if (h) {
-      if (!wasOpen) overlayReturnFocus = trigger || null;
-      const dialog = host.querySelector('[role="dialog"]');
-      const title = dialog.querySelector('h3');
-      dialog.setAttribute('aria-modal', 'true');
-      if (title) { title.id = 'overlay-title'; dialog.setAttribute('aria-labelledby', title.id); }
-      focusWithin(dialog, previousFocus);
-    } else if (wasOpen) {
-      focusWithin(screenHost, overlayReturnFocus);
-      overlayReturnFocus = null;
-    }
+    if (h) mountIn(host, UI.owidgets);
   }
   function render() {
-    if (UI.screen === 'network') return;
     const screenHost = document.getElementById('screen');
-    const oldKey = UI.renderedKey;
-    const screenHadFocus = screenHost.contains(document.activeElement);
-    const screenFocus = screenHadFocus ? focusBookmark(document.activeElement) : null;
-    root.classList.toggle('reduce-motion', reduceMotion());
     const sc = document.querySelector('#screen .scroll');
     if (sc) UI.scroll[UI.renderedKey] = sc.scrollTop;
     if (UI.screen === 'run' && UI.tab === 'office' && run) {
@@ -993,13 +772,13 @@
     else if (UI.screen === 'ledger') h = screenLedger();
     else if (UI.screen === 'settings') h = screenSettings();
     else if (UI.screen === 'help') h = screenHelp();
+    unmount(UI.widgets); UI.seaScene = null; UI.seaMap = null; UI.mainMap = null;
     screenHost.innerHTML = h;
+    mountIn(screenHost, UI.widgets);
     UI.renderedKey = UI.screen + ':' + (UI.screen === 'run' ? UI.tab : '');
     const nsc = document.querySelector('#screen .scroll');
     if (nsc && UI.scroll[UI.renderedKey]) nsc.scrollTop = UI.scroll[UI.renderedKey];
-    renderOverlay(screenFocus);
-    if (!document.getElementById('overlay').classList.contains('open') && (screenHadFocus || (oldKey && oldKey !== UI.renderedKey))) focusWithin(screenHost, screenFocus);
-    if (UI.screen === 'sea' && run && run.voyage) placeShip(UI.sea.frac);
+    renderOverlay();
     if (run && (UI.screen === 'run' || UI.screen === 'sea')) countCash();
   }
   function countCash() {
@@ -1017,6 +796,7 @@
     if (run) {
       const got = MM.checkAch(run, meta, false);
       if (got.length) { Sound.ach(); buzz([20, 40, 20]); got.forEach(a => toast('Achievement: ' + a.name + ' · +' + a.lp + ' Legacy', 'ach')); }
+      (run.bounties || []).forEach(b => { if (b.done && !b.told) { b.told = true; Sound.levelup(); toast('Bounty done: ' + b.text + ' · +' + b.lp + ' Legacy', 'ach'); } else if (b.failed && !b.told && run.phase !== 'ended') { b.told = true; toast('Bounty missed: ' + b.text, 'bad'); } });
       saveRun();
     }
     saveMeta();
@@ -1065,18 +845,20 @@
     const s = run;
     const hudEl = document.querySelector('#screen .hud');
     if (hudEl) { hudEl.outerHTML = hud(); countCash(); }
+    if (UI.seaScene) UI.seaScene.set({ event: s.pending ? s.pending.type : null });
     const pill = document.querySelector('.voyage-pill span');
     if (pill && s.voyage) pill.textContent = 'Day ' + Math.min(s.voyage.idx, s.voyage.days) + ' of ' + s.voyage.days + (s.voyage.insured ? ' · insured' : '');
     const logEl = document.querySelector('.sealog');
     if (logEl && s.voyage) {
-      const logs = s.log.filter(l => l.day > s.voyage.startDay).slice(0, 6);
+      const logs = s.log.filter(l => l.day > s.voyage.startDay).slice(0, 5);
       if (logs.length) logEl.innerHTML = logs.map((l, i) => '<li class="' + l.kind + (i === 0 && l !== logBefore ? ' fresh' : '') + '"><small>Day ' + l.day + '</small><span>' + esc(l.text) + '</span></li>').join('');
     }
   }
   function finishSeason() {
     stopSea(); stopShip();
     const f = MM.endSeason(run, meta);
-    if (saveMeta()) lsDel(KEYS[UI.slot]);
+    saveMeta();
+    lsDel(KEYS[UI.slot]);
     UI.final = f; UI.endRun = run; run = null; UI.slot = null;
     UI.screen = 'end'; UI.modal = null; UI.sheet = null;
     render();
@@ -1099,19 +881,13 @@
     lsSet(KEYS.daily, MM.serialize(s));
     Sound.horn(); buzz(40);
     enterRun('daily', s);
-    UI.sheet = { type: 'info', title: 'Daily Voyage', icon: I.calendar, html: '<p>The same seas, prices and storms for everyone today. Captain Rahim, standard rules' + (s.twist ? ', plus today’s twist:' : '.') + '</p>' + (s.twist ? '<p><b>' + esc(MM.TWISTS[s.twist].name) + '.</b> ' + esc(MM.TWISTS[s.twist].desc) + '</p>' : '') + '<p class="dim">Finish it on consecutive days to build your streak.</p>' };
+    UI.sheet = { type: 'info', title: 'Daily Voyage', icon: I.calendar, html: '<p>The same seas, prices and storms for everyone today. Captain Rahim, standard rules' + (s.twist ? ', plus today’s twist:' : '.') + '</p>' + (s.twist ? '<p><b>' + esc(MM.TWISTS[s.twist].name) + '.</b> ' + esc(MM.TWISTS[s.twist].desc) + '</p>' : '') + '<p>Everyone races the same Towkay Lim and the same three bounties.</p><p class="dim">Finish it on consecutive days to build your streak.</p>' };
     renderOverlay();
   }
 
   /* ================= Actions ================= */
   const A = {
-    network() {
-      if (!window.MMNetworkUI || !window.MMNetwork) { toast('Monsoon Company could not load. Reload the game and try again.', 'bad'); return; }
-      stopSea(); stopShip(); UI.sheet = null; UI.modal = null; run = null; UI.slot = null;
-      renderOverlay(); UI.screen = 'network';
-      window.MMNetworkUI.open({ root, onExit() { UI.screen = 'title'; render(); focusWithin(document.getElementById('screen')); } });
-    },
-    'go-title'() { if (run && !saveRun()) return; stopSea(); stopShip(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
+    'go-title'() { stopSea(); stopShip(); if (run) saveRun(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
     continue(d) { const s = loadSlot(d.slot); if (s) enterRun(d.slot, s); else render(); },
     'new-season'() {
       UI.setup.level = Math.min(UI.setup.level, meta.levelMax);
@@ -1151,12 +927,16 @@
       (r.ach || []).forEach(a => toast('Achievement: ' + a.name + ' · +' + a.lp + ' Legacy', 'ach'));
       saveMeta(); render();
     },
-    toggle(d) { meta.settings[d.id] = !meta.settings[d.id]; saveMeta(); if (d.id === 'sound' && meta.settings.sound) Sound.good(); render(); },
+    toggle(d) {
+      meta.settings[d.id] = !meta.settings[d.id]; saveMeta();
+      if (d.id === 'sound' && meta.settings.sound) Sound.good();
+      if (d.id === 'sound' || d.id === 'music') { if (meta.settings.sound && meta.settings.music) { SFX.ac(); SFX.Music.start(); } else SFX.Music.stop(); }
+      render();
+    },
     'reset-tips'() { meta.tips = {}; meta.settings.tips = true; saveMeta(); toast('Tips will show again', 'good'); render(); },
     'tip-ok'(d) { meta.tips[d.id] = 1; saveMeta(); render(); },
     export() {
       const data = { meta, normal: lsGet(KEYS.normal), daily: lsGet(KEYS.daily) };
-      if (run && UI.slot) data[UI.slot] = MM.serialize(run);
       const code = 'MM1:' + btoa(unescape(encodeURIComponent(JSON.stringify(data))));
       const done = () => toast('Backup code copied', 'good');
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, () => { UI.sheet = { type: 'info', title: 'Backup code', html: '<textarea readonly class="codebox">' + esc(code) + '</textarea>' }; renderOverlay(); });
@@ -1168,12 +948,14 @@
       try {
         const raw = box.value.trim(); if (raw.indexOf('MM1:') !== 0) throw new Error('bad');
         const data = JSON.parse(decodeURIComponent(escape(atob(raw.slice(4)))));
-        meta = restoreBackup(data);
-        storageWarning = false;
+        if (!data.meta || !data.meta.stats) throw new Error('bad');
+        meta = mergeMeta(data.meta); saveMeta();
+        if (data.normal) lsSet(KEYS.normal, data.normal); else lsDel(KEYS.normal);
+        if (data.daily) lsSet(KEYS.daily, data.daily); else lsDel(KEYS.daily);
         UI.importOpen = false; toast('Progress restored', 'good'); UI.screen = 'title'; render();
-      } catch (e) { toast(e.storage ? e.message : 'That code didn’t work. Your progress was not changed.', 'bad'); Sound.error(); }
+      } catch (e) { toast('That code didn’t work', 'bad'); Sound.error(); }
     },
-    reset() { UI.sheet = { type: 'confirm', title: 'Erase captain progress?', text: 'Captain seasons, Daily Voyage, Legacy, unlocks and achievements on this device will be deleted. Monsoon Company is kept. This can’t be undone.', yes: 'reset-go', yesLabel: 'Erase', danger: true }; renderOverlay(); },
+    reset() { UI.sheet = { type: 'confirm', title: 'Erase everything?', text: 'All Legacy, unlocks, achievements and seasons on this device will be deleted. This can’t be undone.', yes: 'reset-go', yesLabel: 'Erase', danger: true }; renderOverlay(); },
     'reset-go'() { lsDel(KEYS.meta); lsDel(KEYS.normal); lsDel(KEYS.daily); meta = MM.newMeta(); saveMeta(); UI.sheet = null; UI.screen = 'title'; toast('Progress erased'); render(); },
     install() { const e = UI.installEvt; if (!e) return; e.prompt(); e.userChoice.then(() => { UI.installEvt = null; render(); }); },
     'sw-update'() { if (UI.swWaiting) UI.swWaiting.postMessage({ type: 'SKIP_WAITING' }); },
@@ -1199,14 +981,11 @@
       afterAction(); render();
     },
     map(d, el, ev) {
-      const svg = el.closest('svg'); if (!svg || !svg.getScreenCTM) return;
-      const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
-      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-      let best = null, bd = 1e9;
-      MM.PORT_IDS.forEach(id => { const [x, y] = MAP.nodeXY(MM, id); const dd = Math.hypot(x - p.x, y - p.y); if (dd < bd) { bd = dd; best = id; } });
-      if (best && bd < 55) { UI.sheet = { type: 'port', p: best }; Sound.tap(); renderOverlay(); }
+      const mv = el._w; if (!mv) return;
+      const best = mv.pick(ev.clientX, ev.clientY, 20);
+      if (best) { UI.sheet = { type: 'port', p: best }; Sound.cursor(); mv.set({ selected: best }); el.querySelectorAll('.lbl').forEach(l => l.classList.toggle('sel', l.textContent === pShort(best))); renderOverlay(); }
     },
-    port(d) { if (!MM.PORTS[d.p]) return; UI.sheet = { type: 'port', p: d.p }; Sound.tap(); renderOverlay(); },
+    'rival-info'() { UI.sheet = { type: 'info', title: MM.RIVAL.name, icon: I.sword, html: raceCard(run) + '<h4 class="sub">Bounties</h4>' + bountyList(run) }; Sound.tap(); renderOverlay(); },
     plan(d) { UI.sheet = { type: 'depart', p: d.p, insure: run.insurePref !== false }; renderOverlay(); },
     'toggle-ins'() { UI.sheet.insure = !UI.sheet.insure; renderOverlay(); },
     'cast-off'(d) {
@@ -1216,7 +995,7 @@
       Sound.horn(); buzz(40);
       afterAction(); render(); seaLoop();
     },
-    'sea-fast'() { UI.sea.fast = !UI.sea.fast; const b = document.querySelector('[data-a="sea-fast"]'); if (b) { b.classList.toggle('on', UI.sea.fast); b.querySelector('span').textContent = UI.sea.fast ? 'Fast' : 'Normal speed'; } },
+    'sea-fast'() { UI.sea.fast = !UI.sea.fast; if (UI.seaScene) UI.seaScene.set({ speed: UI.sea.fast ? 2 : 1 }); const b = document.querySelector('[data-a="sea-fast"]'); if (b) { b.classList.toggle('on', UI.sea.fast); b.querySelector('span').textContent = UI.sea.fast ? 'Fast' : 'Normal'; } },
     choose(d) {
       const e = run.pending; if (!e) return;
       const r = MM.resolve(run, d.id);
@@ -1236,7 +1015,7 @@
       afterAction(); render();
     },
     'end-season'() { finishSeason(); },
-    'end-early'() { UI.sheet = { type: 'confirm', title: 'End the season now?', text: 'Your cargo will be sold here at today’s prices, debts settled, and the season scored.<br><br>Season Legacy requires a completed voyage (shipwrecks count) and scales with days played; eligible runs earn at least 1 LP.', yes: 'end-season', yesLabel: 'End season', danger: true }; renderOverlay(); },
+    'end-early'() { UI.sheet = { type: 'confirm', title: 'End the season now?', text: 'Your cargo will be sold here at today’s prices, debts settled, and the season scored.', yes: 'end-season', yesLabel: 'End season', danger: true }; renderOverlay(); },
     accept(d) { const r = MM.acceptOffer(run, +d.id); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.good(); toast('Contract signed'); afterAction(); render(); },
     'bank-borrow'(d) { const amt = Math.floor(MM.bankLimit(run) * +d.f); const r = MM.bankBorrow(run, amt); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.buy(); toast('Borrowed ' + rm(amt) + ' from the bank'); afterAction(); render(); },
     'bank-repay'() { const r = MM.bankRepay(run, run.bank); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.good(); toast('Bank repaid'); afterAction(); render(); },
@@ -1256,9 +1035,10 @@
       renderOverlay();
     },
     'ship-go'(d) { const r = MM.buyShip(run, d.id); UI.sheet = null; if (!r.ok) { toast(r.msg, 'bad'); render(); return; } Sound.fanfare(); buzz([30, 40, 30]); toast('Welcome aboard the ' + MM.SHIPS[d.id].name); afterAction(); render(); },
-    'close-sheet'() { UI.sheet = null; renderOverlay(); if (UI.screen === 'run' && UI.tab === 'map') render(); },
+    'close-sheet'() { UI.sheet = null; renderOverlay(); if (UI.screen === 'run' && UI.tab === 'map' && UI.mainMap) { UI.mainMap.set({ selected: null }); document.querySelectorAll('.lbl.sel').forEach(l => l.classList.remove('sel')); } },
     menu() { UI.sheet = { type: 'menu' }; Sound.tap(); renderOverlay(); },
-    'toggle-sound'() { meta.settings.sound = !meta.settings.sound; saveMeta(); if (meta.settings.sound) Sound.good(); renderOverlay(); },
+    'toggle-sound'() { meta.settings.sound = !meta.settings.sound; saveMeta(); if (meta.settings.sound) { Sound.good(); if (meta.settings.music) SFX.Music.start(); } else SFX.Music.stop(); renderOverlay(); },
+    'toggle-music'() { meta.settings.music = !meta.settings.music; saveMeta(); if (meta.settings.music && meta.settings.sound) { SFX.ac(); SFX.Music.start(); } else SFX.Music.stop(); renderOverlay(); },
     'help-run'() { stopSea(); UI.sheet = null; UI.helpBack = 'help-back'; UI.prevScreen = UI.screen; UI.screen = 'help'; render(); },
     'help-back'() { UI.screen = UI.prevScreen || 'title'; render(); if (UI.screen === 'sea') seaLoop(); },
     'season-info'() {
@@ -1297,23 +1077,6 @@
   root.addEventListener('input', ev => {
     const el = ev.target;
     if (el && el.dataset && el.dataset.a === 'qty-range') setQty(+el.value);
-  });
-  root.addEventListener('keydown', ev => {
-    const dialog = document.querySelector('#overlay [role="dialog"]');
-    if (!dialog) return;
-    if (ev.key === 'Escape' && dialog.classList.contains('sheet')) {
-      ev.preventDefault();
-      A['close-sheet']();
-    } else if (ev.key === 'Tab') {
-      const items = Array.from(dialog.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')).filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
-      const first = items[0], last = items[items.length - 1];
-      if (!first) { ev.preventDefault(); focusWithin(dialog); return; }
-      const active = document.activeElement;
-      if (!dialog.contains(active) || active.tabIndex < 0 || (ev.shiftKey && active === first) || (!ev.shiftKey && active === last)) {
-        ev.preventDefault();
-        (ev.shiftKey ? last : first).focus();
-      }
-    }
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { stopSea(); saveRun(); saveMeta(); }
