@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '2.0.0';
+  const VERSION = '2.1.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -82,20 +82,25 @@
     electronics: { name: 'Electronics', base: 95000, vol: 0.032, gvol: 0.014, depth: 110 },
     durian:      { name: 'Durian',      base: 32000, vol: 0.045, gvol: 0.016, depth: 160, perish: 4, perishCold: 10, unlock: 'good_durian' },
     coal:        { name: 'Coal',        base: 650,   vol: 0.028, gvol: 0.012, depth: 9000, unlock: 'good_coal' },
+    // Products: made in your factories, but every market also trades them.
+    food:        { name: 'Packaged Food', base: 6750,   vol: 0.028, gvol: 0.012, depth: 1800, product: true },
+    tyres:       { name: 'Tyres',         base: 15500,  vol: 0.032, gvol: 0.014, depth: 900, product: true },
+    coffeemix:   { name: 'Coffee Mix',    base: 28000,  vol: 0.036, gvol: 0.016, depth: 400, product: true },
+    machinery:   { name: 'Machinery',     base: 152000, vol: 0.03,  gvol: 0.013, depth: 90, product: true },
   };
   const GOOD_IDS = Object.keys(GOODS);
 
   // Port price factors vs. the regional average (below 1 = exporter/cheap, above 1 = importer/dear).
   const PF = {
-    penang:    { rice: 1.14, palm: 0.84, rubber: 0.80, steel: 1.10, coffee: 1.12, electronics: 0.88, durian: 0.64, coal: 1.16 },
-    klang:     { rice: 1.14, palm: 0.78, rubber: 0.88, steel: 1.08, coffee: 1.10, electronics: 0.98, durian: 0.70, coal: 1.12 },
-    singapore: { rice: 1.12, palm: 0.86, rubber: 0.94, steel: 1.06, coffee: 1.10, electronics: 1.00, durian: 0.92, coal: 0.96 },
-    jakarta:   { rice: 1.24, palm: 0.74, rubber: 0.86, steel: 1.24, coffee: 0.84, electronics: 1.20, durian: 0.94, coal: 0.66 },
-    bangkok:   { rice: 0.74, palm: 1.06, rubber: 0.76, steel: 1.20, coffee: 1.00, electronics: 1.06, durian: 0.72, coal: 1.14 },
-    hcmc:      { rice: 0.80, palm: 1.22, rubber: 0.94, steel: 1.26, coffee: 0.78, electronics: 1.16, durian: 0.86, coal: 1.08 },
-    haiphong:  { rice: 0.92, palm: 1.28, rubber: 1.12, steel: 1.08, coffee: 0.96, electronics: 0.92, durian: 1.08, coal: 0.86 },
-    shenzhen:  { rice: 1.16, palm: 1.34, rubber: 1.36, steel: 0.86, coffee: 1.22, electronics: 0.78, durian: 1.40, coal: 1.22 },
-    shanghai:  { rice: 1.18, palm: 1.38, rubber: 1.32, steel: 0.70, coffee: 1.30, electronics: 0.86, durian: 1.50, coal: 1.30 },
+    penang:    { rice: 1.14, palm: 0.84, rubber: 0.80, steel: 1.10, coffee: 1.12, electronics: 0.88, durian: 0.64, coal: 1.16, food: 1.02, tyres: 0.96, coffeemix: 1.00, machinery: 1.02 },
+    klang:     { rice: 1.14, palm: 0.78, rubber: 0.88, steel: 1.08, coffee: 1.10, electronics: 0.98, durian: 0.70, coal: 1.12, food: 0.96, tyres: 0.97, coffeemix: 1.00, machinery: 1.05 },
+    singapore: { rice: 1.12, palm: 0.86, rubber: 0.94, steel: 1.06, coffee: 1.10, electronics: 1.00, durian: 0.92, coal: 0.96, food: 1.12, tyres: 1.00, coffeemix: 1.06, machinery: 1.00 },
+    jakarta:   { rice: 1.24, palm: 0.74, rubber: 0.86, steel: 1.24, coffee: 0.84, electronics: 1.20, durian: 0.94, coal: 0.66, food: 1.10, tyres: 1.08, coffeemix: 0.96, machinery: 1.12 },
+    bangkok:   { rice: 0.74, palm: 1.06, rubber: 0.76, steel: 1.20, coffee: 1.00, electronics: 1.06, durian: 0.72, coal: 1.14, food: 0.95, tyres: 1.10, coffeemix: 1.02, machinery: 1.08 },
+    hcmc:      { rice: 0.80, palm: 1.22, rubber: 0.94, steel: 1.26, coffee: 0.78, electronics: 1.16, durian: 0.86, coal: 1.08, food: 1.00, tyres: 1.10, coffeemix: 0.95, machinery: 1.10 },
+    haiphong:  { rice: 0.92, palm: 1.28, rubber: 1.12, steel: 1.08, coffee: 0.96, electronics: 0.92, durian: 1.08, coal: 0.86, food: 1.05, tyres: 1.12, coffeemix: 1.02, machinery: 1.08 },
+    shenzhen:  { rice: 1.16, palm: 1.34, rubber: 1.36, steel: 0.86, coffee: 1.22, electronics: 0.78, durian: 1.40, coal: 1.22, food: 1.08, tyres: 0.96, coffeemix: 1.10, machinery: 0.94 },
+    shanghai:  { rice: 1.18, palm: 1.38, rubber: 1.32, steel: 0.70, coffee: 1.30, electronics: 0.86, durian: 1.50, coal: 1.30, food: 1.10, tyres: 0.95, coffeemix: 1.12, machinery: 0.92 },
   };
   const PORT_SIZE = { penang: 0.8, klang: 1.1, singapore: 1.4, jakarta: 1.0, bangkok: 1.0, hcmc: 1.0, haiphong: 0.9, shenzhen: 1.3, shanghai: 1.5 };
 
@@ -346,7 +351,7 @@
         rumourProfit: false, durianSales: 0, peak: 0, m1Day: 0, voyages: 0, daysAtSea: 0, reports: 0, spoiled: 0, lostValue: 0, bigShip: false,
         visited: {}, sold: {}, alongUsed: false, typhoons: 0,
       },
-      rival: null, bounties: [],
+      rival: null, bounties: [], co: newCo(),
       hist: [], seq: 0, log: [],
       sunk: false, lastDay: false, final: null,
     };
@@ -415,15 +420,17 @@
   function spreadOf(s) { let sp = s.captain === 'meiling' ? 0.03 : 0.06; if (s.level >= 7) sp += 0.02; return sp; }
   function buyPrice(s, p, g) { return mid(s, p, g) * (1 + spreadOf(s) / 2); }
   function sellPrice(s, p, g) { return mid(s, p, g) * (1 - spreadOf(s) / 2); }
-  function quoteBuy(s, g, q) {
-    const p = s.port; q = Math.max(0, Math.floor(q));
+  function quoteBuy(s, g, q) { return quoteBuyAt(s, s.port, g, q); }
+  function quoteSell(s, g, q) { return quoteSellAt(s, s.port, g, q); }
+  function quoteBuyAt(s, p, g, q) {
+    q = Math.max(0, Math.floor(q));
     const m0 = mid(s, p, g), dI = ELASTIC * q / depthT(p, g);
     const f = dI > 1e-9 ? (Math.exp(dI) - 1) / dI : 1;
     const avg = m0 * (1 + spreadOf(s) / 2) * f;
     return { q, avg, total: Math.round(avg * q), after: m0 * Math.exp(dI) * (1 + spreadOf(s) / 2), move: Math.exp(dI) - 1 };
   }
-  function quoteSell(s, g, q) {
-    const p = s.port; q = Math.max(0, Math.floor(q));
+  function quoteSellAt(s, p, g, q) {
+    q = Math.max(0, Math.floor(q));
     const m0 = mid(s, p, g), dI = ELASTIC * q / depthT(p, g);
     const f = dI > 1e-9 ? (1 - Math.exp(-dI)) / dI : 1;
     const avg = m0 * (1 - spreadOf(s) / 2) * f;
@@ -449,8 +456,8 @@
     return v;
   }
   function tradeIn(s) { const sh = SHIPS[s.ship.cls]; return sh.price ? Math.round(sh.price * 0.6) : sh.tradeIn; }
-  function netWorth(s) { return s.cash + cargoValue(s) + tradeIn(s) - s.bank - s.along; }
-  function netWorthCost(s) { return s.cash + cargoCostValue(s) + tradeIn(s) - s.bank - s.along; }
+  function netWorth(s) { return s.cash + cargoValue(s) + tradeIn(s) + coValue(s, false) - s.bank - s.along; }
+  function netWorthCost(s) { return s.cash + cargoCostValue(s) + tradeIn(s) + coValue(s, true) - s.bank - s.along; }
   function addCargo(s, g, q, unitCost) {
     if (q <= 0) return;
     const c = s.cargo[g] || (s.cargo[g] = { q: 0, cost: 0 });
@@ -610,7 +617,7 @@
     const r1 = rnd(W), m1 = rnd(W), m2 = rnd(W), d1 = rInt(W, 3, 5), d2 = rInt(W, 4, 7), lead = rInt(W, 2, 4);
     const lanes = [];
     s.goods.forEach(g => {
-      if (GOODS[g].perish) return;
+      if (GOODS[g].perish || GOODS[g].product) return;
       s.ports.forEach(a => s.ports.forEach(b => { if (a !== b && PF[b][g] / PF[a][g] >= 1.3) lanes.push({ g, a, b, r: PF[b][g] / PF[a][g] }); }));
     });
     if (!lanes.length) return;
@@ -631,7 +638,7 @@
     const half = Math.round(s.maxDays / 2);
     const b = { id: type, type, lp: BOUNTY_LP[type], done: false, failed: false, p: {} };
     if (type === 'deliver') {
-      const goods = s.goods.filter(g => !GOODS[g].perish);
+      const goods = s.goods.filter(g => !GOODS[g].perish && !GOODS[g].product);
       const g = goods[Math.floor(rnd(W) * goods.length)];
       const dests = s.ports.filter(p => PF[p][g] >= 1.12);
       const p = dests.length ? dests[Math.floor(rnd(W) * dests.length)] : s.ports[0];
@@ -730,6 +737,7 @@
     if (s.ship.up.radio) snapshotAll(s);
     else if (s.phase === 'port') snapshot(s, s.port);
     if (s.captain === 'kumar' && s.day % 7 === 0) { snapshotAll(s); log(s, 'Kumar’s contacts send a fresh market report.', 'info'); }
+    companyTick(s);
     s.hist.push([s.day, Math.round(netWorth(s))]);
     afterChange(s);
   }
@@ -1116,7 +1124,7 @@
       const g = rPick(L, s.goods);
       const dests = s.ports.filter(p => p !== s.port && PF[p][g] >= 1.12);
       const r1 = rnd(L), r2 = rnd(L), r3 = rnd(L), r4 = rnd(L);
-      if (!dests.length) continue;
+      if (!dests.length || (GOODS[g].product && coStage(s) < 2)) continue;
       const d = dests[Math.floor(r1 * dests.length)];
       const plan = planVoyage(s, d);
       const deadline = s.day + plan.days + 4 + Math.floor(r2 * 7);
@@ -1238,6 +1246,257 @@
     return { ok: true, cost: c };
   }
 
+
+  /* ================= Company: warehouses, factories, standing orders, freight ================= */
+  const STAGES = [
+    { id: 'trader', at: 0, name: 'Trader', desc: 'Buy, sail and sell.' },
+    { id: 'warehouse', at: 150000, name: 'Warehouses', desc: 'Rent warehouses and set standing buy and sell orders.' },
+    { id: 'factory', at: 500000, name: 'Factories', desc: 'Build factories that turn raw goods into products every day.' },
+    { id: 'freight', at: 1000000, name: 'Freight', desc: 'Hire freight to run standing routes between ports.' },
+  ];
+  const CO = { whCost: 60000, whUpCost: 50000, whCap: 400, whMaxLvl: 3, whUpkeep: 300, facCost: 150000, facUpCost: 120000, facUpkeep: 600, facBatches: 20, facMaxLvl: 2,
+    routeBase: 3000, routePerTDay: 6, routeMax: 3, freightSpeed: 12, orderMax: 4, reserve: 20000, batchFee: 0.04 };
+  const RECIPES = {
+    food:      { name: 'Food processor', input: { rice: 2, palm: 1 }, out: 2, batches: 9 },
+    tyres:     { name: 'Tyre plant', input: { rubber: 1, steel: 1 }, out: 1, batches: 8 },
+    coffeemix: { name: 'Coffee roastery', input: { coffee: 2, rice: 1 }, out: 2, batches: 2 },
+    machinery: { name: 'Machine works', input: { steel: 3, electronics: 1 }, out: 1, batches: 1 },
+  };
+  function newCo() { return { wh: {}, fac: {}, routes: [], reserve: CO.reserve, seq: 0, made: 0, trips: 0, autoBought: 0, autoSold: 0, upkeep: 0, built: 0 }; }
+  function coStage(s) { let k = 0; STAGES.forEach((st, i) => { if ((s.st.peak || 0) >= st.at) k = i; }); return Math.max(k, s.co ? (s.co.minStage || 0) : 0); }
+  function nextStage(s) { const k = coStage(s); return STAGES[k + 1] || null; }
+  function whUsed(w) { let t = 0; for (const g in w.stock) t += w.stock[g].q; return t; }
+  function whCap(w) { return w.lvl * CO.whCap; }
+  function whFree(w) { return Math.max(0, whCap(w) - whUsed(w)); }
+  function stockAdd(w, g, q, unit) { if (q <= 0) return; const c = w.stock[g] || (w.stock[g] = { q: 0, cost: 0 }); c.cost = (c.cost * c.q + unit * q) / (c.q + q); c.q += q; }
+  function stockTake(w, g, q) { const c = w.stock[g]; if (!c) return 0; q = Math.min(q, c.q); c.q -= q; if (c.q <= 0) delete w.stock[g]; return q; }
+  function spendable(s) { return Math.max(0, s.cash - (s.co ? s.co.reserve : CO.reserve)); }
+  function coLog(s, text, kind) { log(s, text, kind || 'co'); }
+  function needStage(s, k) { return coStage(s) >= k ? null : fail(STAGES[k].name + ' unlock at ' + rm(STAGES[k].at) + ' net worth'); }
+  function freightDays(s, from, to) {
+    const r = route(from, to); let eff = 0;
+    r.segs.forEach(sg => { eff += sg.len * windFactor(s, sg, phaseOn(s, s.day)); });
+    return Math.max(1, Math.round(eff / (CO.freightSpeed * 24)));
+  }
+  function routeQuote(s, from, to, q) { const days = freightDays(s, from, to); return { days, cost: Math.round(CO.routeBase + CO.routePerTDay * q * days) }; }
+  function buildWarehouse(s) {
+    if (!canAct(s)) return fail('Not now');
+    const st = needStage(s, 1); if (st) return st;
+    if (s.co.wh[s.port]) return fail('You already have a warehouse here');
+    if (s.cash < CO.whCost) return fail('Not enough cash');
+    s.cash -= CO.whCost; s.co.built += CO.whCost;
+    s.co.wh[s.port] = { lvl: 1, stock: {}, orders: [], invest: CO.whCost };
+    coLog(s, 'Warehouse opened in ' + PORTS[s.port].name + '.', 'good');
+    afterChange(s);
+    return { ok: true };
+  }
+  function upgradeWarehouse(s, p) {
+    if (!canAct(s)) return fail('Not now');
+    const w = s.co.wh[p]; if (!w) return fail('No warehouse there');
+    if (w.lvl >= CO.whMaxLvl) return fail('Already the biggest warehouse');
+    if (s.cash < CO.whUpCost) return fail('Not enough cash');
+    s.cash -= CO.whUpCost; s.co.built += CO.whUpCost; w.invest += CO.whUpCost; w.lvl++;
+    afterChange(s);
+    return { ok: true };
+  }
+  function storeCargo(s, g, q) {
+    if (!canAct(s)) return fail('Not now');
+    const w = s.co.wh[s.port]; if (!w) return fail('No warehouse here');
+    if (GOODS[g].perish) return fail('Warehouses have no cold storage');
+    const c = s.cargo[g]; if (!c) return fail('Not aboard');
+    q = Math.min(Math.floor(q), c.q, whFree(w));
+    if (q <= 0) return fail(whFree(w) <= 0 ? 'The warehouse is full' : 'Nothing to store');
+    stockAdd(w, g, q, c.cost); removeCargo(s, g, q);
+    afterChange(s);
+    return { ok: true, q };
+  }
+  function takeCargo(s, g, q) {
+    if (!canAct(s)) return fail('Not now');
+    const w = s.co.wh[s.port]; if (!w) return fail('No warehouse here');
+    const c = w.stock[g]; if (!c) return fail('Not in the warehouse');
+    q = Math.min(Math.floor(q), c.q, freeSpace(s));
+    if (q <= 0) return fail('Your hold is full');
+    const unit = c.cost; stockTake(w, g, q); addCargo(s, g, q, unit);
+    afterChange(s);
+    return { ok: true, q };
+  }
+  const ORDER_MODES = { buy: ['cheap', 'any'], sell: ['dear', 'any'] };
+  function setOrder(s, p, kind, g, qty, mode) {
+    const w = s.co.wh[p]; if (!w) return fail('No warehouse there');
+    if (!ORDER_MODES[kind] || ORDER_MODES[kind].indexOf(mode) < 0) return fail('Unknown order');
+    if (s.goods.indexOf(g) < 0 || GOODS[g].perish) return fail('Not this cargo');
+    qty = Math.floor(qty); if (!(qty >= 1 && qty <= 1000)) return fail('Choose 1 to 1,000 t a day');
+    const same = w.orders.find(o => o.kind === kind && o.g === g);
+    if (same) { same.qty = qty; same.mode = mode; return { ok: true, id: same.id }; }
+    if (w.orders.length >= CO.orderMax) return fail('Up to ' + CO.orderMax + ' orders per warehouse');
+    const o = { id: ++s.co.seq, kind, g, qty, mode, done: 0 };
+    w.orders.push(o);
+    return { ok: true, id: o.id };
+  }
+  function removeOrder(s, p, id) { const w = s.co.wh[p]; if (!w) return fail('No warehouse there'); const i = w.orders.findIndex(o => o.id === id); if (i < 0) return fail('No such order'); w.orders.splice(i, 1); return { ok: true }; }
+  function buildFactory(s, recipe) {
+    if (!canAct(s)) return fail('Not now');
+    const st = needStage(s, 2); if (st) return st;
+    if (!RECIPES[recipe]) return fail('Unknown factory');
+    if (!s.co.wh[s.port]) return fail('Open a warehouse here first');
+    if (s.co.fac[s.port]) return fail('This port already has your factory');
+    if (s.cash < CO.facCost) return fail('Not enough cash');
+    s.cash -= CO.facCost; s.co.built += CO.facCost;
+    s.co.fac[s.port] = { recipe, lvl: 1, made: 0, invest: CO.facCost, note: '' };
+    coLog(s, RECIPES[recipe].name + ' built in ' + PORTS[s.port].name + '.', 'good');
+    afterChange(s);
+    return { ok: true };
+  }
+  function upgradeFactory(s, p) {
+    if (!canAct(s)) return fail('Not now');
+    const f = s.co.fac[p]; if (!f) return fail('No factory there');
+    if (f.lvl >= CO.facMaxLvl) return fail('Already upgraded');
+    if (s.cash < CO.facUpCost) return fail('Not enough cash');
+    s.cash -= CO.facUpCost; s.co.built += CO.facUpCost; f.invest += CO.facUpCost; f.lvl++;
+    afterChange(s);
+    return { ok: true };
+  }
+  function addRoute(s, from, to, g, qty, dest) {
+    const st = needStage(s, 3); if (st) return st;
+    if (!s.co.wh[from]) return fail('Routes start at one of your warehouses');
+    if (from === to || s.ports.indexOf(to) < 0) return fail('Pick another port');
+    if (dest !== 'wh' && dest !== 'mkt') return fail('Unknown destination');
+    if (dest === 'wh' && !s.co.wh[to]) return fail('You have no warehouse there');
+    if (s.goods.indexOf(g) < 0 || GOODS[g].perish) return fail('Not this cargo');
+    qty = Math.floor(qty); if (!(qty >= 10 && qty <= 200)) return fail('Choose 10 to 200 t a trip');
+    if (s.co.routes.length >= CO.routeMax) return fail('Up to ' + CO.routeMax + ' routes');
+    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false };
+    s.co.routes.push(r);
+    return { ok: true, id: r.id };
+  }
+  function removeRoute(s, id) { const i = s.co.routes.findIndex(r => r.id === id); if (i < 0) return fail('No such route'); const r = s.co.routes[i]; if (r.trip) return fail('Wait until the cargo arrives'); s.co.routes.splice(i, 1); return { ok: true }; }
+  function pauseRoute(s, id) { const r = s.co.routes.find(x => x.id === id); if (!r) return fail('No such route'); r.paused = !r.paused; return { ok: true, paused: r.paused }; }
+  function setReserve(s, amt) { amt = Math.floor(amt); if (!(amt >= 0 && amt <= 5e6)) return fail('Choose RM 0 to 5M'); s.co.reserve = amt; return { ok: true }; }
+  function coTrade(s, p, g, q, side, unitCost) {
+    const qt = side === 'buy' ? quoteBuyAt(s, p, g, q) : quoteSellAt(s, p, g, q);
+    s.mk[p][g].I += (side === 'buy' ? 1 : -1) * ELASTIC * q / depthT(p, g);
+    return qt;
+  }
+  function vsAvg(s, p, g) { return baseMid(s, p, g) / (GOODS[g].base * Math.exp(s.G[g])) - 1; }
+  function companyTick(s) {
+    const co = s.co; if (!co) return;
+    const ports = Object.keys(co.wh);
+    if (!ports.length && !co.routes.length) return;
+    // 1. upkeep
+    let up = 0;
+    ports.forEach(p => { up += co.wh[p].lvl * CO.whUpkeep; });
+    Object.keys(co.fac).forEach(p => { up += co.fac[p].lvl * CO.facUpkeep; });
+    s.cash -= up; s.st.costs += up; co.upkeep += up;
+    // 2. factories
+    Object.keys(co.fac).forEach(p => {
+      const f = co.fac[p], w = co.wh[p], R = RECIPES[f.recipe];
+      if (!w) return;
+      let n = f.lvl * R.batches;
+      Object.keys(R.input).forEach(g => { n = Math.min(n, Math.floor(((w.stock[g] || {}).q || 0) / R.input[g])); });
+      const grow = R.out - Object.keys(R.input).reduce((t, g) => t + R.input[g], 0);
+      if (grow > 0) n = Math.min(n, Math.floor(whFree(w) / grow));
+      const fee = Math.round(GOODS[f.recipe].base * R.out * CO.batchFee);
+      n = Math.min(n, Math.floor(spendable(s) / Math.max(1, fee)));
+      if (n <= 0) { f.note = Object.keys(R.input).some(g => ((w.stock[g] || {}).q || 0) < R.input[g]) ? 'Waiting for inputs' : 'Cash below your reserve'; return; }
+      let cost = fee * n;
+      Object.keys(R.input).forEach(g => { cost += w.stock[g].cost * R.input[g] * n; stockTake(w, g, R.input[g] * n); });
+      s.cash -= fee * n; s.st.costs += fee * n;
+      const out = R.out * n;
+      stockAdd(w, f.recipe, out, cost / out);
+      f.made += out; co.made += out; f.note = 'Made ' + out + ' t today';
+    });
+    // 3. standing buy and sell orders
+    ports.forEach(p => {
+      const w = co.wh[p];
+      w.orders.forEach(o => {
+        if (s.goods.indexOf(o.g) < 0) return;
+        const v = vsAvg(s, p, o.g);
+        if (o.kind === 'buy') {
+          if (o.mode === 'cheap' && v > -0.1) return;
+          let q = Math.min(o.qty, whFree(w));
+          if (q <= 0) return;
+          while (q > 0 && quoteBuyAt(s, p, o.g, q).total > spendable(s)) q = Math.floor(q * 0.7);
+          if (q <= 0) return;
+          const qt = coTrade(s, p, o.g, q, 'buy');
+          s.cash -= qt.total; stockAdd(w, o.g, q, qt.total / q); o.done += q; co.autoBought += qt.total; s.st.trades++;
+        } else {
+          if (o.mode === 'dear' && v < 0.1) return;
+          const have = (w.stock[o.g] || {}).q || 0;
+          const q = Math.min(o.qty, have);
+          if (q <= 0) return;
+          const basis = w.stock[o.g].cost * q;
+          const qt = coTrade(s, p, o.g, q, 'sell');
+          stockTake(w, o.g, q); s.cash += qt.total; o.done += q; co.autoSold += qt.total; s.st.trades++;
+          s.st.maxSale = Math.max(s.st.maxSale, qt.total); s.st.bestTrade = Math.max(s.st.bestTrade, qt.total - basis);
+          if (qt.total > basis) s.st.profitSales++;
+          addSold(s, p, o.g, q);
+        }
+      });
+    });
+    // 4. freight routes: arrivals, then departures
+    co.routes.forEach(r => {
+      if (r.trip && s.day >= r.trip.arrive) {
+        const t = r.trip; r.trip = null; r.trips++; co.trips++;
+        let q = t.q;
+        if (rnd(s.rngL) < 0.04) { const lost = Math.round(q * rRange(s.rngL, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; coLog(s, 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.', 'bad'); }
+        if (r.dest === 'wh' && co.wh[r.to]) {
+          const w = co.wh[r.to], room = Math.min(q, whFree(w));
+          stockAdd(w, r.g, room, t.unit); q -= room;
+        }
+        if (q > 0) {
+          const qt = coTrade(s, r.to, r.g, q, 'sell');
+          s.cash += qt.total; co.autoSold += qt.total; s.st.trades++; s.st.maxSale = Math.max(s.st.maxSale, qt.total);
+          s.st.bestTrade = Math.max(s.st.bestTrade, qt.total - t.unit * q); addSold(s, r.to, r.g, q);
+          coLog(s, 'Freight sold ' + q + ' t ' + GOODS[r.g].name.toLowerCase() + ' in ' + PORTS[r.to].name + ' for ' + rm(qt.total) + '.', 'good');
+        } else coLog(s, 'Freight delivered ' + t.q + ' t ' + GOODS[r.g].name.toLowerCase() + ' to ' + PORTS[r.to].name + '.', 'co');
+      }
+      if (!r.trip && !r.paused) {
+        const w = co.wh[r.from]; if (!w) return;
+        const have = (w.stock[r.g] || {}).q || 0;
+        const q = Math.min(r.qty, have);
+        if (q <= 0 || (q < Math.min(10, r.qty) && q * w.stock[r.g].cost < 150000)) return;
+        const rq = routeQuote(s, r.from, r.to, q);
+        if (spendable(s) < rq.cost) return;
+        const unit = w.stock[r.g].cost;
+        stockTake(w, r.g, q); s.cash -= rq.cost; s.st.costs += rq.cost;
+        r.trip = { q, unit: unit + rq.cost / q, depart: s.day, arrive: s.day + rq.days };
+      }
+    });
+    // 5. contracts delivered straight from a warehouse at the destination
+    for (const k of s.contracts.slice()) {
+      const w = co.wh[k.dest], c = w && w.stock[k.good];
+      if (c && c.q >= k.qty && s.day <= k.deadline) {
+        const pay = k.qty * k.pay;
+        stockTake(w, k.good, k.qty); addSold(s, k.dest, k.good, k.qty);
+        s.cash += pay; s.st.contracts++; s.st.contractPay += pay;
+        s.contracts.splice(s.contracts.indexOf(k), 1);
+        coLog(s, 'Warehouse ' + PORTS[k.dest].name + ' delivered the contract: ' + k.qty + ' t ' + GOODS[k.good].name.toLowerCase() + ' for ' + rm(pay) + '.', 'good');
+      }
+    }
+    // 6. your warehouses report live prices
+    ports.forEach(p => snapshot(s, p));
+  }
+  function coValue(s, atCost) {
+    const co = s.co; if (!co) return 0;
+    let v = 0;
+    Object.keys(co.wh).forEach(p => {
+      const w = co.wh[p]; v += w.invest * 0.7;
+      for (const g in w.stock) v += w.stock[g].q * (atCost ? w.stock[g].cost : baseMid(s, p, g) * (1 - spreadOf(s) / 2));
+    });
+    Object.keys(co.fac).forEach(p => { v += co.fac[p].invest * 0.7; });
+    co.routes.forEach(r => { if (r.trip) v += r.trip.q * r.trip.unit; });
+    return v;
+  }
+  function coDaily(s) { const co = s.co; if (!co) return 0; let up = 0; Object.keys(co.wh).forEach(p => { up += co.wh[p].lvl * CO.whUpkeep; }); Object.keys(co.fac).forEach(p => { up += co.fac[p].lvl * CO.facUpkeep; }); return up; }
+  function coSummary(s) {
+    const co = s.co;
+    return {
+      stage: coStage(s), next: nextStage(s), daily: coDaily(s), value: coValue(s, false), reserve: co.reserve,
+      warehouses: Object.keys(co.wh).map(p => ({ p, lvl: co.wh[p].lvl, used: whUsed(co.wh[p]), cap: whCap(co.wh[p]), stock: co.wh[p].stock, orders: co.wh[p].orders, fac: co.fac[p] || null })),
+      routes: co.routes.map(r => Object.assign({}, r, { quote: routeQuote(s, r.from, r.to, r.qty) })),
+    };
+  }
+
   /* ================= Waiting & ending ================= */
   function waitDay(s) {
     if (!canAct(s)) return fail('Not now');
@@ -1268,7 +1527,8 @@
     } else { s.cargo = {}; }
     const ship = s.sunk ? 0 : tradeIn(s);
     const debts = Math.round(s.bank + s.along);
-    const nw = Math.round(s.cash + ship - debts);
+    const company = Math.round(coValue(s, false));
+    const nw = Math.round(s.cash + ship + company - debts);
     if (nw > s.st.peak) s.st.peak = nw;
     s.phase = 'ended'; s.pending = null;
     const rank = rankFor(nw);
@@ -1276,7 +1536,7 @@
     const rewardNote = !rewardEligible
       ? 'Complete a voyage to earn season Legacy. Shipwrecks at sea also count.'
       : rewardFraction < 1 ? 'Season Legacy is scaled to the days played. A season with a completed voyage or shipwreck earns at least 1 LP.' : '';
-    const f = { nw, cash: Math.round(s.cash), sold: Math.round(sold), ship, debts, rank, rankName: RANKS[rank].name, lp: base, lpBase: base, streakBonus: 0, levelUp: false, newAch: [], day: s.day, rewardEligible, rewardFraction, rewardNote };
+    const f = { nw, cash: Math.round(s.cash), sold: Math.round(sold), ship, company, debts, rank, rankName: RANKS[rank].name, lp: base, lpBase: base, streakBonus: 0, levelUp: false, newAch: [], day: s.day, rewardEligible, rewardFraction, rewardNote };
     checkBounties(s, true);
     f.rivalNW = rivalFinal(s);
     f.beatRival = nw > f.rivalNW;
@@ -1540,6 +1800,30 @@
       saveRequire(saveRecord(s.rival)); saveNumbers(s.rival, ['nw', 'target', 'next', 'walk']);
       saveRequire(Array.isArray(s.rival.hist) && s.rival.hist.every(h => Array.isArray(h) && h.length === 2 && h.every(Number.isFinite)));
     }
+    // Supply-chain layer: products join the markets of older seasons and the company starts empty.
+    GOOD_IDS.filter(g => GOODS[g].product && s.goods.indexOf(g) < 0).forEach(g => {
+      s.goods.push(g);
+      s.G[g] = 0;
+      s.ports.forEach(p => { s.mk[p][g] = { L: 0, I: 0 }; });
+    });
+    if (s.co == null) s.co = newCo();
+    const co = s.co;
+    saveRequire(saveRecord(co) && saveRecord(co.wh) && saveRecord(co.fac) && Array.isArray(co.routes));
+    saveNumbers(co, ['reserve', 'seq', 'made', 'trips', 'autoBought', 'autoSold', 'upkeep', 'built']);
+    saveRequire(co.reserve >= 0 && co.routes.length <= CO.routeMax);
+    Object.keys(co.wh).forEach(p => {
+      const w = co.wh[p];
+      saveRequire(s.ports.includes(p) && saveRecord(w) && Number.isInteger(w.lvl) && w.lvl >= 1 && w.lvl <= CO.whMaxLvl && Number.isFinite(w.invest) && saveRecord(w.stock) && Array.isArray(w.orders) && w.orders.length <= CO.orderMax);
+      Object.keys(w.stock).forEach(g => { saveRequire(s.goods.includes(g)); saveNumbers(w.stock[g], ['q', 'cost']); saveRequire(w.stock[g].q > 0 && w.stock[g].cost >= 0); });
+      saveRequire(whUsed(w) <= whCap(w) + 1e-6);
+      w.orders.forEach(o => { saveRequire(saveRecord(o) && ORDER_MODES[o.kind] && ORDER_MODES[o.kind].includes(o.mode) && s.goods.includes(o.g)); saveNumbers(o, ['id', 'qty', 'done']); });
+    });
+    Object.keys(co.fac).forEach(p => { const f = co.fac[p]; saveRequire(co.wh[p] && saveRecord(f) && saveHas(RECIPES, f.recipe) && Number.isInteger(f.lvl) && f.lvl >= 1 && f.lvl <= CO.facMaxLvl); saveNumbers(f, ['made', 'invest']); });
+    co.routes.forEach(r => {
+      saveRequire(saveRecord(r) && co.wh[r.from] && s.ports.includes(r.to) && r.from !== r.to && ['wh', 'mkt'].includes(r.dest) && s.goods.includes(r.g) && typeof r.paused === 'boolean');
+      saveNumbers(r, ['id', 'qty', 'trips']);
+      if (r.trip != null) { saveNumbers(r.trip, ['q', 'unit', 'depart', 'arrive']); saveRequire(r.trip.q > 0); }
+    });
     if (s.bounties == null) s.bounties = [];
     saveRequire(Array.isArray(s.bounties) && s.bounties.length <= 3);
     s.bounties.forEach(b => saveRequire(saveRecord(b) && saveHas(BOUNTY_LP, b.type) && typeof b.text === 'string' && saveRecord(b.p) && Number.isFinite(b.lp)));
@@ -1584,6 +1868,8 @@
     waitDay, endSeason, rankFor, seasonLP, checkAch, unlock, dayKeyShift,
     knownSell, bestKnownSell, bestKnownBuy, marketRows, portProfile, newsFeed, upcomingDeadlines, cargoRows,
     serialize, deserialize, deserializeMeta, canAct,
+    STAGES, CO, RECIPES, ORDER_MODES, coStage, nextStage, whUsed, whCap, whFree, buildWarehouse, upgradeWarehouse, storeCargo, takeCargo, setOrder, removeOrder,
+    buildFactory, upgradeFactory, addRoute, removeRoute, pauseRoute, setReserve, routeQuote, freightDays, coValue, coDaily, coSummary, vsAvg, quoteBuyAt, quoteSellAt,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = MM;
   else root.MM = MM;

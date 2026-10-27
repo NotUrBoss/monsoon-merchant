@@ -1,55 +1,39 @@
 # Monsoon Merchant
 
-An installable, offline-capable trading game, drawn in 16-bit pixel art. **Play Monsoon Company** combines captaining, manufacturing, warehouses, sea/air/rail freight, delivery orders and finance in one 60-day campaign.
+An installable, offline-capable trading game for phones, drawn in 16-bit pixel art. One game: you start as a captain with an old coaster, and your trading company grows around you into a full supply chain.
 
-## The unified campaign
+## One season, captain first
 
-Begin with RM 500,000, a Port Klang warehouse and a starter coaster. Every workspace uses the same money, inventory network, liabilities, calendar and company backup. Changing the selected regional hub manages remote facilities; it does not teleport your captain.
+Each season is 60 days across 9 South-East Asian ports. Buy cargo, read the monsoon, sail, sell, take contracts and beat **Towkay Lim**, the rival trader. As your peak net worth grows, the season unlocks the supply chain one layer at a time, in a fifth **Company** tab:
 
-**Source → manufacture → store → load or charter → travel → unload → sell or fulfil an order.**
+| Unlocks at | Layer | What you can do |
+| --- | --- | --- |
+| Start | Trader | Buy, sail, sell, contracts and banks. |
+| RM 150k | Warehouses | Rent a warehouse in a port. Store and load cargo from the Market tab. Set standing buy and sell orders. |
+| RM 500k | Factories | Build a factory beside a warehouse. It turns stored inputs into products every day. |
+| RM 1M | Freight | Run up to 3 standing freight routes between your warehouses, or to another port's market. |
 
-Manage 14 hubs and 12 products. Run your own captain alongside up to three chartered shipments, expandable to six. Factories transform local inputs into food, textiles, electronics or machinery. All work advances only when you press **Next event** or the one-day advance button. Arrival and production space is reserved before departure or job start; stock cannot be sold twice.
+**Source → store → manufacture → ship → sell or fulfil a contract**, all while you keep sailing. Every automatic action is one you approved, with a limit:
 
-The captain's voyage quote shows cost and arrival day. Monsoons change on day 31; ship condition affects passage time. Insurance includes repair of voyage storm damage at arrival. Repair and upgrade your ship through the Captain workspace. Unified warehouses can expand to level 10 / 1,240 t so the largest 1,200 t ship can actually be received.
+- **Buy orders** buy up to N t a day, only when cheap (10% below the regional average) or at any price.
+- **Sell orders** sell up to N t a day, only when dear (10% above average) or at any price.
+- **Factories** run whenever their warehouse holds the inputs and has room: Packaged Food (2 rice + 1 palm oil), Tyres (1 rubber + 1 steel), Coffee Mix (2 coffee + 1 rice) and Machinery (3 steel + 1 electronics).
+- **Freight routes** repeat every trip until paused, delivering to your warehouse or selling on arrival.
+- A **cash reserve** (default RM 20k) protects the captain: orders, factories and freight never spend below it. Contracts whose destination has your warehouse are delivered from it automatically.
 
-Orders pay once and consume delivered warehouse stock instead of an ordinary market sale. Borrowing and repayment share the company ledger: daily interest is 0.5% of outstanding company debt, and sale/order proceeds repay debt before increasing spendable cash. Check upkeep and delivery dates before spending the reserve. The campaign settles on day 60, including remaining cargo and asset resale values, less liabilities.
+The map shows your warehouses, factory smoke and freight at sea. At the end of the season, the company counts in your net worth: stock at local prices, buildings at 70% of what you invested. Products stay hidden until factories unlock, so the early game is as simple as before.
 
-## Pixel edition (v2.0.0)
+Also in every season: monsoon winds, storms and pirates, three Legacy bounties, Daily Voyage, Monsoon levels, and Legacy unlocks between seasons. See `docs/merged-design.md` for the design.
 
-The whole game uses a 16-bit pixel look: an embedded pixel font (Pixelify Sans, digits from Silkscreen, both SIL Open Font License 1.1), JRPG-style windows, pixel icons and captain portraits, and chiptune sound with an optional music loop (Settings). Company workspaces keep their layout and controls, re-skinned.
+More hubs (Tokyo, Mumbai, Kolkata, Colombo, Dubai, Sydney) are planned as future Legacy unlocks.
 
-Classic captain seasons also gain:
+## Saves and the Archive
 
-- an animated pixel sea chart and a side-on sailing scene with day and night, storms, pirates and port skylines;
-- **Towkay Lim**, a rival trader whose junks move markets (his buying lifts prices at the loading port; a glut follows where he unloads). Finishing worth more than him pays bonus Legacy;
-- three **bounties** per season that pay Legacy at the end;
-- markets that remember big trades for about a week, bolder pirates, and a chance to founder in a storm when the hull is below 40%.
+Seasons save in this browser (`mm.run.normal.v1`, `mm.run.daily.v1`, Legacy in `mm.meta.v1`). Older captain seasons continue in the new game and gain an empty company.
 
-Existing classic saves load: they gain the rival and no bounties.
+The separate **Monsoon Company** campaign is retired. If this device has a campaign in progress (`mm.company.v3`, or older `mm.company.v2` / `mm.network.v1` saves, which still migrate untouched), **Archive** on the title screen lets you finish it or restore a company backup. New company campaigns cannot be started.
 
-## Fewer-click operations
-
-The Map workspace is an operations desk. Click the warehouse, factory, captain or freight terminal, or use the matching accessible action buttons. Original workspaces remain available.
-
-**First delivery in four primary actions after starting:** Plan the Straits delivery → Confirm your own ship → Next event → Fulfil the delivered order. The prefilled plan can include the destination warehouse, missing cargo and voyage in one reviewed transaction. Every charge is shown; nothing moves until confirmation. Custom routes compare own-ship, sea, air and available rail options.
-
-After the first order, review the opening food chain to build a processor, buy missing inputs and start 10 batches together. Existing factories also have a buy-inputs-and-start shortcut. No automatic borrowing or ongoing spending policy is enabled.
-
-Next event previews the elapsed days and upkeep, then stops at the next completion or important decision. It also protects a three-day upkeep reserve and open contract deadlines. One-day advance remains available for deliberate overrides. Short operational summaries can be dismissed or effects disabled without changing the ledger.
-
-From day 8, an optional pantry customer decision trades a higher payment for earlier delivery, or a lower payment for more time. The agreed deadline/payment is saved and enforced by actual fulfilment. Keeping or ignoring the offer retains the original contract. No money is awarded merely for replying.
-
-## A first working supply chain
-
-Open a Singapore warehouse. At Klang, buy palm oil, then either charter it to Singapore or load your captain's hold and sail. Advance to the quoted arrival day and fulfil the 20 t Straits starter order by day 15.
-
-Build a food processor at Klang. Buy 20 t rice and 10 t palm oil, and run 10 batches to produce 30 t packaged food. When complete, deliver the food to Singapore and fulfil its pantry order by day 30. The captain, factory and chartered freight can be working concurrently. The objective tracker guides this progression without granting hidden money or cargo.
-
-## Saves and existing games
-
-Company progress uses `mm.company.v3` in this browser. Its Backup button exports all integrated modules together. Valid v2 company saves and Network Company v1 saves migrate into the new slot; their original `mm.company.v2` and `mm.network.v1` copies remain untouched. Malformed backups are rejected before replacing the current game, and a storage failure exposes an in-memory backup instead of silently discarding play.
-
-Classic captain seasons, Daily Voyage and Legacy remain available as archived challenges with their original saves. They are not numerically merged into the new company: the old economies, unlocks and scoring differ. Features unique to those challenges, such as Ah Long and the original captain/Legacy unlock tree, remain there. This is a local single-player game, not a cloud-synced or multiplayer economy; use one active game tab per company.
+This is a local single-player game, not a cloud-synced or multiplayer economy; use one game tab at a time.
 
 ## Install and development
 
@@ -57,12 +41,12 @@ Open the published game once online. On iPhone, use Safari's Share → Add to Ho
 
 The runtime is plain HTML, CSS and JavaScript, with no build step or external runtime requests. For local development, run `python -m http.server 8000` from the repository and open its localhost address.
 
-- `logistics.js`: authoritative unified company engine, validation and migration.
-- `network-ui.js`: company workspaces, controls and persistence.
-- `company-actions.js`: atomic multi-step delivery/production previews and next-event advancement.
-- `company-play.js`: operations desk, route comparison, customer decisions and compact reports.
-- `company-world.js` / `company.css`: state-driven schematic map, port environment and responsive presentation.
-- `engine.js`, `ui.js`, `map.js`: preserved classic game; the company reuses its ship catalog.
+- `engine.js`: the game engine: markets, voyages, rival, bounties, the in-season company (warehouses, orders, factories, freight) and save validation.
+- `ui.js`, `map.js`: the game screens, including the Company tab.
+- `logistics.js`, `network-ui.js`: the archived company campaign engine and screens (finish-only).
+- `company-actions.js` (archive): atomic multi-step delivery/production previews and next-event advancement.
+- `company-play.js` (archive): operations desk, route comparison, customer decisions and compact reports.
+- `company-world.js` / `company.css` (archive): state-driven schematic map, port environment and responsive presentation.
 - `art.js`, `pixel.js`: pixel sprites, sailing scenes, port skylines and the classic sea chart, all drawn in code (no image assets).
 - `sfx.js`: chiptune sound effects and the optional sea-shanty music loop.
 - `index.html`, `sw.js`, manifest and icons: app shell and offline assets.
@@ -83,8 +67,8 @@ python -m playwright install --with-deps chromium firefox webkit
 python tests/browser_e2e.py --browsers chromium firefox webkit --output /tmp/mm-evidence
 ```
 
-The browser suite uses actual UI controls against a Pages-style subpath, including a complete 60-day campaign, concurrent production and deliveries, backup/restore, service-worker offline reload, form validation, responsive layouts, legacy-save migration, and simulated storage failure. It records screenshots and failure traces. It does not access production saves.
+The browser suite uses actual UI controls against a Pages-style subpath, including building a warehouse, standing orders, a factory and a freight route inside a season, the archived 60-day campaign, concurrent production and deliveries, backup/restore, service-worker offline reload, form validation, responsive layouts, legacy-save migration, and simulated storage failure. It records screenshots and failure traces. It does not access production saves.
 
 See `docs/interaction-review.md` and `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
 
-Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.0.0; company save schema is v3.
+Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.1.0; archived company save schema is v3.

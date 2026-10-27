@@ -278,6 +278,8 @@
     return spriteCanvas('mk' + kind, () => {
       if (kind === 'star') return A.fromRows(['..Y..', '.YYY.', 'YYWYY', '.YYY.', 'Y...Y'].map(r => r), true);
       if (kind === 'arrow') return A.fromRows(['YYYYY', 'YYYYY', '.YYY.', '..Y..'], true);
+      if (kind === 'crate') return A.fromRows(['SSSSS', 'sDsDs', 'sssss'], true);
+      if (kind === 'freight') return A.fromRows(['..W..', '.yWy.', 'ttttt', '.TTT.'], true);
       if (kind === 'cursor') return A.fromRows(['W....', 'WW...', 'WWW..', 'WWWW.', 'WWW..', 'WW...', 'W....'], true);
       return A.fromRows(['RRRR', 'RRRR'], true);
     });
@@ -366,6 +368,15 @@
         x.drawImage(s, Math.round(p.x) - 4, Math.round(p.y) - 6 + (Math.sin(t / 300) > 0 ? 0 : 1));
       }
     }
+    // your warehouses, factories and freight in transit
+    (o.whs || []).forEach(p => { const [px, py] = this.xy(p); x.drawImage(markerSprite('crate'), Math.round(px) - 3, Math.round(py) + 3); });
+    (o.facs || []).forEach(p => { const [px, py] = this.xy(p); const k = Math.floor(t / 400) % 3; x.fillStyle = PAL.W; x.fillRect(Math.round(px) - 7, Math.round(py) - 5 - k, 2, 1); x.fillStyle = PAL.w; x.fillRect(Math.round(px) - 8, Math.round(py) - 7 - k, 2, 1); x.fillStyle = PAL.g; x.fillRect(Math.round(px) - 8, Math.round(py) - 9 - k, 1, 1); });
+    (o.trips || []).forEach(tr => {
+      const r = root.MM.route(tr.from, tr.to), pts = r.path.map(id => this.xy(id));
+      const p = MAP.pointAlong(pts, Math.max(0, Math.min(1, tr.frac)));
+      const s2 = markerSprite('freight');
+      x.drawImage(s2, Math.round(p.x) - 3, Math.round(p.y) - 4 + (Math.sin(t / 260 + tr.frac * 9) > 0 ? 0 : 1));
+    });
     // contract destinations
     (o.dests || []).forEach(p => { const [px, py] = this.xy(p); const s = markerSprite('star'); x.drawImage(s, Math.round(px) + 2, Math.round(py) - 12 + (Math.sin(t / 250) > 0 ? 0 : 1)); });
     // you are here
