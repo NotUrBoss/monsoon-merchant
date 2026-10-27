@@ -136,6 +136,6 @@ test('100 seeded smart-operation campaigns stay valid through previews, confirma
 test('offline shell includes both interaction modules and release versions remain aligned',()=>{
  const root=path.join(__dirname,'..'),sw=fs.readFileSync(path.join(root,'sw.js'),'utf8'),html=fs.readFileSync(path.join(root,'index.html'),'utf8');
  for(const name of ['company-actions.js','company-play.js']){assert(sw.includes(name));assert(html.includes(name));}
- assert(sw.includes('mm-2.2.0'));
+ assert(sw.includes('mm-2.3.0'));
  for(const name of ['art.js','pixel.js','sfx.js']){assert(sw.includes(name));assert(html.includes(name));}
 });

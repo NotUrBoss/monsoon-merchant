@@ -6,6 +6,7 @@ const MM = require('../engine.js');
 function season(seed, peak) {
   const s = MM.newRun({ seed: seed || 'chain' }, MM.newMeta());
   if (peak) { s.cash += peak; s.st.peak = Math.max(s.st.peak, peak); }
+  s.co.nextAlert = 1e9; // keep random company alerts out of these mechanics tests
   return s;
 }
 const ok = r => { assert.ok(r && r.ok, r && r.msg); return r; };
@@ -23,7 +24,7 @@ test('stages unlock by peak net worth and gate each layer', () => {
   s.st.peak = 1e6; s.cash = 400000;
   ok(MM.buildFactory(s, 'food'));
   ok(MM.addRoute(s, 'klang', 'singapore', 'palm', 50, 'mkt'));
-  assert.equal(MM.nextStage(s), null);
+  s.st.peak = 1e9; assert.equal(MM.nextStage(s), null);
 });
 
 test('warehouse stores and returns cargo at cost, within capacity, and counts in net worth', () => {

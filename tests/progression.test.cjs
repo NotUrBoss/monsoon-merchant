@@ -98,8 +98,9 @@ test('a completed daily voyage still records its score and daily participation',
   const { run, meta } = newSeason({ mode: 'daily', dateKey: '2026-10-18' });
   sailToPenang(run);
   const result = MM.endSeason(run, meta);
-  assert.equal(result.streakBonus, 1);
+  assert.equal(result.streakBonus, 0, 'the streak no longer pays a growing bonus');
   assert.equal(meta.daily.streak, 1);
+  assert.equal(meta.daily.total, 1);
   assert.equal(meta.daily.plays['2026-10-18'], 1);
   assert.equal(meta.daily.best['2026-10-18'], result.nw);
 });
