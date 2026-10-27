@@ -338,7 +338,7 @@ def v2_migration_journey(page, context, url, out):
         assert migrated[key]==original[key]
     assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
     page.wait_for_function('navigator.serviceWorker.controller !== null')
-    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.2.0');return (await c.keys()).map(r=>r.url);}''')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.3.0');return (await c.keys()).map(r=>r.url);}''')
     assert any(x.endswith('/company-actions.js') for x in cached)
     assert any(x.endswith('/company-play.js') for x in cached)
     assert all(any(x.endswith('/' + n) for x in cached) for n in ('art.js', 'pixel.js', 'sfx.js'))
@@ -397,7 +397,8 @@ def merged_supply_chain_journey(page, context, url, out):
     page.reload(wait_until='networkidle')
     act(page, 'continue', slot='normal')
     act(page, 'tab', id='company')
-    assert page.locator('.stagecard .stg.on').count() == 4
+    assert page.locator('.stagecard .stg.on').count() == 5
+    act(page, 'co-tab', id='sites')
     act(page, 'wh-build')
     assert 'klang' in season_state(page)['co']['wh']
     for good in ('rice', 'palm'):
@@ -406,6 +407,7 @@ def merged_supply_chain_journey(page, context, url, out):
     assert [o['g'] for o in season_state(page)['co']['wh']['klang']['orders']] == ['rice', 'palm']
     act(page, 'fac-sheet'); act(page, 'fac-build', id='food')
     assert season_state(page)['co']['fac']['klang']['recipe'] == 'food'
+    act(page, 'co-tab', id='freight')
     act(page, 'route-new'); act(page, 'rt-g', v='food'); act(page, 'rt-to', v='singapore'); act(page, 'rt-q', v=25); act(page, 'rt-save')
     assert season_state(page)['co']['routes'][0]['to'] == 'singapore'
     for width, height in ((320,740),(375,812),(768,1024)):
@@ -424,7 +426,8 @@ def merged_supply_chain_journey(page, context, url, out):
     s = season_state(page)
     assert s['co']['made'] > 0, s['co']['fac']
     act(page, 'tab', id='company')
-    assert 'Made' in page.locator('.facline').inner_text()
+    act(page, 'co-tab', id='sites')
+    assert 'Made' in page.locator('.facline').first.inner_text()
     page.evaluate("document.getElementById('toasts').innerHTML=''")
     page.screenshot(path=str(out/'company-running.png'))
     page.reload(wait_until='networkidle')
@@ -471,10 +474,67 @@ def season_length_and_company_events_journey(page, context, url, out):
     page.evaluate("document.getElementById('toasts').innerHTML=''")
     page.screenshot(path=str(out/'company-orders.png'))
 
+def endless_and_layers_journey(page, context, url, out):
+    # Pick Endless on the setup screen, build every company layer with visible controls, close a chapter and retire.
+    page.set_viewport_size({'width':390,'height':844})
+    page.goto(url, wait_until='networkidle')
+    act(page, 'new-season')
+    act(page, 'pick-days', id='endless')
+    assert page.locator('[data-a="pick-days"][data-id="endless"]').get_attribute('aria-pressed') == 'true'
+    act(page, 'start-season')
+    st = page.evaluate("JSON.parse(localStorage.getItem('mm.run.endless.v1'))")
+    assert st['mode'] == 'endless' and st['endless']['ch'] == 1
+    assert page.locator('.day.endless').count() == 1
+    page.evaluate("window.__mm.A['go-title']()")
+    page.evaluate('''() => {const s=MM.newRun({seed:'e2e-endless',mode:'endless'},MM.newMeta());s.cash+=14000000;s.st.peak=14000000;
+      for(let i=0;i<50;i++)MM.waitDay(s);
+      localStorage.setItem('mm.run.endless.v1',MM.serialize(s));}''')
+    page.reload(wait_until='networkidle')
+    act(page, 'continue', slot='endless')
+    endless = lambda: page.evaluate("JSON.parse(localStorage.getItem('mm.run.endless.v1'))")
+    act(page, 'tab', id='company')
+    assert page.locator('.stagecard .stg.on').count() == 8
+    act(page, 'co-tab', id='sites')
+    act(page, 'wh-build')
+    act(page, 'est-sheet'); page.locator('.sheet [data-a="est-build"]').first.click()
+    act(page, 'shop-open')
+    act(page, 'shop-tier', v='premium'); act(page, 'shop-terms', v='credit')
+    act(page, 'mgr-sheet'); act(page, 'mgr-hire', id='balanced')
+    page.evaluate("window.__mm.A['go-title']()"); page.evaluate("window.__mm.A.continue({slot:'endless'})")
+    co = endless()['co']
+    assert 'klang' in co['est'] and co['shop']['klang']['tier'] == 'premium' and co['shop']['klang']['terms'] == 'credit', co
+    assert co['mgr']['klang']['style'] == 'balanced'
+    act(page, 'tab', id='company'); act(page, 'co-tab', id='sites')
+    for width, height in ((320,740),(375,812)):
+        page.set_viewport_size({'width':width,'height':height})
+        sizes = page.evaluate('''() => [document.documentElement,document.body,document.querySelector('#app'),document.querySelector('.scroll')]
+          .filter(Boolean).map(e=>({tag:e.id||e.className||e.tagName,width:e.clientWidth,scroll:e.scrollWidth}))''')
+        assert all(x['scroll'] <= x['width'] + 1 for x in sizes), sizes
+        page.evaluate("document.getElementById('toasts').innerHTML=''")
+        page.screenshot(path=str(out/f'sites-{width}.png'))
+    page.set_viewport_size({'width':390,'height':844})
+    assert all(p in endless()['ports'] for p in ('colombo','mumbai','dubai','tokyo'))
+    act(page, 'tab', id='market')
+    for _ in range(15):
+        act(page, 'wait')
+        if page.evaluate("window.__mm.UI.modal && window.__mm.UI.modal.type") == 'chapter': break
+        while page.locator('.modal [data-a="result-ok"]').count(): page.locator('.modal [data-a="result-ok"]').first.click()
+    assert endless()['endless']['ch'] == 2
+    assert 'Chapter 1 closed' in page.locator('.modal').inner_text()
+    page.evaluate("document.getElementById('toasts').innerHTML=''")
+    page.screenshot(path=str(out/'chapter.png'))
+    while page.locator('.modal [data-a="result-ok"]').count(): page.locator('.modal [data-a="result-ok"]').first.click()
+    act(page, 'menu'); act(page, 'end-early'); page.locator('.sheet .btn.danger-fill').click()
+    assert page.locator('.end-hero').count() == 1
+    assert page.locator('.hall li').count() == 1
+    assert page.evaluate("JSON.parse(localStorage.getItem('mm.meta.v1')).endless.runs") == 1
+    page.screenshot(path=str(out/'retired.png'))
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',default='/tmp/mm-browser-evidence')
     parser.add_argument('--browsers',nargs='+',default=['chromium'])
+    parser.add_argument('--only',nargs='*',default=None)
     args=parser.parse_args()
     output=Path(args.output);output.mkdir(parents=True,exist_ok=True)
     server=ThreadingHTTPServer(('127.0.0.1',0),functools.partial(QuietHandler,directory=str(ROOT.parent)))
@@ -486,7 +546,8 @@ def main():
             for engine in args.browsers:
                 browser=getattr(playwright,engine).launch(headless=True, **({'executable_path':os.environ['MM_CHROMIUM_PATH']} if engine=='chromium' and os.environ.get('MM_CHROMIUM_PATH') else {}))
                 try:
-                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey)]:
+                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey),('endless-and-layers',endless_and_layers_journey)]:
+                        if args.only and name not in args.only: continue
                         directory=output/engine/name;directory.mkdir(parents=True,exist_ok=True)
                         context=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
                         context.tracing.start(screenshots=True,snapshots=True,sources=True)

@@ -149,7 +149,9 @@ test('company alerts: strikes stop a warehouse, breakdowns stop a factory, booms
         const f = Object.values(s.co.fac).find(x => x.recipe === a.g);
         const w = s.co.wh.klang; w.lvl = 3; w.stock.rice = { q: 200, cost: 1000 }; w.stock.palm = { q: 100, cost: 1000 };
         const made = f.made; ok(MM.waitDay(s));
-        assert.equal(f.made - made, 2 * MM.RECIPES.food.batches * MM.RECIPES.food.out, 'overtime doubles output');
+        // Overtime doubles output, unless the overtime itself broke the machines (a breakdown alert says so).
+        const broke = s.co.alerts.some(x => x.kind === 'breakdown' && x.day === s.day);
+        assert.equal(f.made - made, broke ? 0 : 2 * MM.RECIPES.food.batches * MM.RECIPES.food.out, 'overtime doubles output');
       }
       assert.equal(MM.coChoose(s, a.id, a.choices[0].id).ok, false, 'one decision per alert');
     }
@@ -160,9 +162,9 @@ test('company alerts: strikes stop a warehouse, breakdowns stop a factory, booms
 test('new company state survives save and load; bad alerts and deals are rejected', () => {
   const s = season('save2', 3e6, 120);
   ok(MM.buildWarehouse(s)); ok(MM.buildFactory(s, 'food'));
-  let guard = 0; while (!s.co.dealOffer && guard++ < 30) waitDays(s, 1);
+  let guard = 0; while (!s.co.alerts.length && guard++ < 80) waitDays(s, 1);
+  guard = 0; while (!s.co.dealOffer && guard++ < 30) waitDays(s, 1);
   ok(MM.acceptDeal(s));
-  guard = 0; while (!s.co.alerts.length && guard++ < 80) waitDays(s, 1);
   const t = MM.deserialize(MM.serialize(s));
   assert.deepEqual(t.co, s.co);
   assert.equal(t.maxDays, 120);

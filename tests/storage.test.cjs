@@ -8,7 +8,7 @@ const MM = require('../engine.js');
 // Execute the actual storage boundary with a controlled browser-storage adapter.
 const ui = fs.readFileSync(path.join(__dirname, '../ui.js'), 'utf8');
 const storageSource = ui.slice(ui.indexOf('  const KEYS ='), ui.indexOf('  let meta = loadMeta();'));
-const keys = ['mm.meta.v1', 'mm.run.normal.v1', 'mm.run.daily.v1'];
+const keys = ['mm.meta.v1', 'mm.run.normal.v1', 'mm.run.daily.v1', 'mm.run.endless.v1'];
 function harness(failWrite = () => false, failRead = false) {
   const initial = keys.map((key, i) => [key, 'previous-' + i]);
   const data = new Map(initial);
@@ -42,9 +42,9 @@ test('invalid run, metadata or slot mismatch leaves every saved value untouched'
 test('valid backup saves metadata and season and removes an absent daily slot', () => {
   const h = harness(), b = backup();
   const restored = h.api.restoreBackup(b);
-  assert.equal(restored.lp, 25); assert.equal(h.writes, 3);
+  assert.equal(restored.lp, 25); assert.equal(h.writes, 4);
   assert.equal(h.data.get(keys[0]), JSON.stringify(b.meta));
-  assert.equal(h.data.get(keys[1]), b.normal); assert.equal(h.data.has(keys[2]), false);
+  assert.equal(h.data.get(keys[1]), b.normal); assert.equal(h.data.has(keys[2]), false); assert.equal(h.data.has(keys[3]), false);
 });
 
 test('failure after the first or second write rolls back previous slots', () => {

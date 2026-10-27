@@ -109,6 +109,7 @@
   const LABELS = {
     penang: [-11, 4, 'end'], klang: [-11, 6, 'end'], singapore: [6, 20, 'start'], jakarta: [0, 24, 'middle'],
     bangkok: [-11, 5, 'end'], hcmc: [11, 5, 'start'], haiphong: [-11, 5, 'end'], shenzhen: [4, -14, 'middle'], shanghai: [-11, 6, 'end'],
+    colombo: [9, 4, 'start'], mumbai: [9, 4, 'start'], dubai: [9, 4, 'start'], tokyo: [-11, 4, 'end'],
   };
   root.MAP = { W, H, proj, landPaths, nodeXY, routePoints, polyD, smoothOpen, pointAlong, LABELS, LAND };
 })(typeof window !== 'undefined' ? window : globalThis);
