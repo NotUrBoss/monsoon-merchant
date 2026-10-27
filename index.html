@@ -4,8 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Monsoon Merchant</title>
-<meta name="description" content="A 16-bit trading game across the monsoon seas of Southeast Asia. Plays offline.">
-<meta name="theme-color" content="#111733">
+<meta name="description" content="Build a trading company across Asia and beyond. Captain your ship alongside parallel sea, air and rail shipments, warehouses and manufacturing in one campaign. Plays offline.">
+<link rel="canonical" href="https://noturboss.github.io/monsoon-merchant/">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": ["VideoGame", "WebApplication"],
+  "@id": "https://noturboss.github.io/monsoon-merchant/#game",
+  "name": "Monsoon Merchant",
+  "url": "https://noturboss.github.io/monsoon-merchant/",
+  "description": "A single-player trading and supply-chain strategy game. Captain your ship while running parallel sea, air and rail shipments, regional warehouses and manufacturing in one shared 60-day campaign. Classic captain challenges are also preserved. Installable for offline play after the first visit.",
+  "image": "https://noturboss.github.io/monsoon-merchant/icon-512.png",
+  "applicationCategory": "GameApplication",
+  "operatingSystem": "Any operating system with a modern web browser",
+  "browserRequirements": "Requires JavaScript. An initial internet connection is required for offline installation.",
+  "gamePlatform": "Web browser",
+  "genre": ["Strategy", "Trading simulation"],
+  "playMode": "https://schema.org/SinglePlayer",
+  "inLanguage": "en",
+  "isAccessibleForFree": true,
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "MYR",
+    "url": "https://noturboss.github.io/monsoon-merchant/"
+  }
+}
+</script>
+<meta name="theme-color" content="#0B1A2C">
 <meta name="color-scheme" content="dark">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,15 +42,18 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="company.css">
 </head>
 <body>
-<div id="app"><div id="screen"></div><div id="overlay"></div><div id="toasts"></div></div>
+<div id="app"><div id="screen" tabindex="-1"></div><div id="overlay"></div><div id="toasts" role="status" aria-live="polite" aria-relevant="additions text"></div></div>
 <noscript><p style="padding:24px;color:#fff">Monsoon Merchant needs JavaScript.</p></noscript>
 <script src="engine.js"></script>
 <script src="map.js"></script>
-<script src="art.js"></script>
-<script src="pixel.js"></script>
-<script src="sfx.js"></script>
+<script src="logistics.js"></script>
+<script src="company-world.js"></script>
+<script src="company-actions.js"></script>
+<script src="company-play.js"></script>
+<script src="network-ui.js"></script>
 <script src="ui.js"></script>
 </body>
 </html>
