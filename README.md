@@ -1,6 +1,6 @@
 # Monsoon Merchant
 
-An installable, offline-capable trading game. **Play Monsoon Company** combines captaining, manufacturing, warehouses, sea/air/rail freight, delivery orders and finance in one 60-day campaign.
+An installable, offline-capable trading game, drawn in 16-bit pixel art. **Play Monsoon Company** combines captaining, manufacturing, warehouses, sea/air/rail freight, delivery orders and finance in one 60-day campaign.
 
 ## The unified campaign
 
@@ -13,6 +13,19 @@ Manage 14 hubs and 12 products. Run your own captain alongside up to three chart
 The captain's voyage quote shows cost and arrival day. Monsoons change on day 31; ship condition affects passage time. Insurance includes repair of voyage storm damage at arrival. Repair and upgrade your ship through the Captain workspace. Unified warehouses can expand to level 10 / 1,240 t so the largest 1,200 t ship can actually be received.
 
 Orders pay once and consume delivered warehouse stock instead of an ordinary market sale. Borrowing and repayment share the company ledger: daily interest is 0.5% of outstanding company debt, and sale/order proceeds repay debt before increasing spendable cash. Check upkeep and delivery dates before spending the reserve. The campaign settles on day 60, including remaining cargo and asset resale values, less liabilities.
+
+## Pixel edition (v2.0.0)
+
+The whole game uses a 16-bit pixel look: an embedded pixel font (Pixelify Sans, digits from Silkscreen, both SIL Open Font License 1.1), JRPG-style windows, pixel icons and captain portraits, and chiptune sound with an optional music loop (Settings). Company workspaces keep their layout and controls, re-skinned.
+
+Classic captain seasons also gain:
+
+- an animated pixel sea chart and a side-on sailing scene with day and night, storms, pirates and port skylines;
+- **Towkay Lim**, a rival trader whose junks move markets (his buying lifts prices at the loading port; a glut follows where he unloads). Finishing worth more than him pays bonus Legacy;
+- three **bounties** per season that pay Legacy at the end;
+- markets that remember big trades for about a week, bolder pirates, and a chance to founder in a storm when the hull is below 40%.
+
+Existing classic saves load: they gain the rival and no bounties.
 
 ## Fewer-click operations
 
@@ -50,6 +63,8 @@ The runtime is plain HTML, CSS and JavaScript, with no build step or external ru
 - `company-play.js`: operations desk, route comparison, customer decisions and compact reports.
 - `company-world.js` / `company.css`: state-driven schematic map, port environment and responsive presentation.
 - `engine.js`, `ui.js`, `map.js`: preserved classic game; the company reuses its ship catalog.
+- `art.js`, `pixel.js`: pixel sprites, sailing scenes, port skylines and the classic sea chart, all drawn in code (no image assets).
+- `sfx.js`: chiptune sound effects and the optional sea-shanty music loop.
 - `index.html`, `sw.js`, manifest and icons: app shell and offline assets.
 
 ## Tests and release gate
@@ -72,4 +87,4 @@ The browser suite uses actual UI controls against a Pages-style subpath, includi
 
 See `docs/interaction-review.md` and `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
 
-Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 1.3.0; company save schema is v3.
+Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.0.0; company save schema is v3.

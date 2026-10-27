@@ -125,3 +125,46 @@
 .operations-report .btn { min-height:36px; padding:6px 10px; font-size:12px; }
 .operations-report summary,.route-cost-detail summary { cursor:pointer;line-height:1.5;font-size:13px;padding:8px 0; }
 @media(max-width:760px){.day-actions{width:100%;}.day-actions .btn{width:100%;justify-self:stretch;}}
+
+/* ---------- Pixel skin for the company workspaces ---------- */
+#app.network-mode { max-width: 1120px; }
+.network-screen, .network-screen button, .network-screen input, .network-screen select, .network-screen textarea { font-family: 'MM Digits', 'Pixelify Sans', ui-monospace, monospace; }
+.company-entry, .network-entry { background: linear-gradient(180deg, #1d6b6a, #123f44); box-shadow: inset 0 0 0 2px var(--teal), inset 0 0 0 4px #0b0a1a, 0 3px 0 rgba(0,0,0,.35); }
+.company-entry .dc-m b { color: var(--white); }
+.new-tag { border-radius: 0; border: 2px solid var(--k); background: var(--gold); color: var(--k); font-size: 10px; }
+.net-header { background: var(--navy); border-bottom: 2px solid var(--k); box-shadow: inset 0 -2px 0 #6d7fb8; }
+.net-header b { text-shadow: 2px 2px 0 var(--k); }
+.net-daybar { background: var(--navy); border-top: 2px solid var(--k); box-shadow: inset 0 2px 0 #6d7fb8; }
+.net-intro, .net-card, .net-backup, .company-port, .net-overview > div, .net-product, .net-regions button, .objective-track button, .net-tabs, .net-guidance, .net-warning, .net-badge {
+  border-radius: 0 !important; }
+.net-intro, .net-card {
+  background: linear-gradient(180deg, var(--win1), var(--win2)); border: 2px solid var(--k);
+  box-shadow: inset 0 0 0 2px #d9d3c3, inset 0 0 0 4px #0b0a1a, 0 3px 0 rgba(0,0,0,.35);
+  clip-path: polygon(2px 0, calc(100% - 2px) 0, 100% 2px, 100% calc(100% - 2px), calc(100% - 2px) 100%, 2px 100%, 0 calc(100% - 2px), 0 2px); }
+.net-intro h1, .net-card h2 { color: var(--gold); text-shadow: 2px 2px 0 var(--k); letter-spacing: 0; }
+.net-kicker { color: var(--teal); }
+.net-overview > div, .net-product, .net-regions button, .objective-track button { background: rgba(11,10,26,.6); border: 2px solid var(--k); box-shadow: inset 0 0 0 2px #31508f; }
+.net-product.selected, .net-regions button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--gold); color: var(--gold); }
+.objective-track .done { box-shadow: inset 0 0 0 2px var(--green2); background: #1d3f24; color: var(--green); }
+.net-tabs { background: var(--k); border: 2px solid var(--k); }
+.net-tabs .btn.on { background: var(--gold); color: var(--k); text-shadow: none; }
+.net-badge { border: 2px solid var(--k); background: var(--teal2); color: var(--white); }
+.net-guidance { border-left: 6px solid var(--teal); background: rgba(57,195,178,.12); }
+.net-warning { border: 2px solid var(--orange); background: rgba(244,162,60,.12); }
+.net-field select, .net-field input, .net-field textarea { border-radius: 0; border: 2px solid var(--k); box-shadow: inset 0 0 0 2px var(--blue); background: var(--k); color: var(--white); }
+.net-operations li, .net-stats > div { border-top: 2px dotted #31508f; }
+.net-eta b, .net-overview > div:first-child b { color: var(--gold); }
+.company-world, .company-port { border: 2px solid var(--k); box-shadow: 0 0 0 2px #d9d3c3, 0 0 0 4px var(--k); background: #31508f; }
+.company-world svg, .company-port svg { shape-rendering: crispEdges; image-rendering: pixelated; }
+.company-world svg { background: repeating-linear-gradient(0deg, #31508f 0 6px, #2e4b88 6px 8px); }
+.world-land { fill: #3f9142; stroke: #245a33; stroke-width: 2; }
+.world-ocean { fill: #6fb7ea; }
+.world-caption { fill: #b4e6ff; }
+.world-node { fill: #23315f; stroke: #f6f2e4; stroke-width: 2; }
+.world-hub.owned .world-node { fill: #39c3b2; }
+.world-hub.selected .world-node { fill: #ffd65c; stroke: #0b0a1a; }
+.world-hub text { font-family: 'Pixelify Sans', ui-monospace, monospace; fill: #f6f2e4; stroke: #0b0a1a; stroke-width: 3; }
+.world-rail { stroke: #ebc98f; }
+.world-route { stroke: #b4e6ff; fill: #b4e6ff; }
+.route-captain { stroke: #ffd65c; fill: #ffd65c; }
+.port-caption { background: var(--k); color: var(--muted); }

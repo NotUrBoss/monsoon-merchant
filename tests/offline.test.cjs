@@ -32,7 +32,8 @@ test('service worker precaches every app asset and serves cached navigation offl
   let pending;
   handlers.install({waitUntil(p) {pending = p;}});
   await pending;
-  assert.equal(cached.size, 17);
+  assert.equal(cached.size, 20);
+  ['./art.js', './pixel.js', './sfx.js'].forEach(a => assert.ok(cached.has(a), a + ' cached for offline play'));
   assert.ok(cached.has('./logistics.js'));
   assert.ok(cached.has('./network-ui.js'));
   assert.ok(cached.has('./company-actions.js'));
