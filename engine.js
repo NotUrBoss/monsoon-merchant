@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '2.0.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -181,6 +181,9 @@
   };
   const TWIST_IDS = Object.keys(TWISTS);
 
+  const RIVAL = { name: 'Towkay Lim', full: 'Lim Ah Seng', desc: 'Old money from Penang. Runs a fleet of junks and hates losing.' };
+  const BOUNTY_LP = { deliver: 8, ports: 6, bigsale: 8, profit: 8, contracts: 8, nwby: 10, hull: 5, rivalby: 8, nodebt: 5 };
+
   const REGION_NAMES = { strait: 'Malacca Strait', java: 'Java Sea', gulf: 'Gulf of Thailand', scs: 'South China Sea', tonkin: 'Gulf of Tonkin', ecs: 'Taiwan Strait' };
 
   /* ================= Sea lanes ================= */
@@ -301,7 +304,7 @@
       stats: { seasons: 0, best: 0, bestRank: null, profit: 0, voyages: 0, storms: 0, pirates: 0, contracts: 0, daysAtSea: 0, trades: 0, sunk: 0 },
       history: [],
       daily: { last: null, streak: 0, bestStreak: 0, best: {}, plays: {} },
-      settings: { sound: true, haptics: true, tips: true, motion: true },
+      settings: { sound: true, music: true, haptics: true, tips: true, motion: true },
       tips: {},
     };
   }
@@ -341,7 +344,9 @@
         trades: 0, profitSales: 0, maxSale: 0, maxMove: 0, bestTrade: 0, spent: 0, revenue: 0, costs: 0, fees: 0, premiums: 0, claims: 0,
         storms: 0, pirates: 0, escapes: 0, contracts: 0, failed: 0, contractPay: 0, borrowed: false, alongRepaid: false, collected: false,
         rumourProfit: false, durianSales: 0, peak: 0, m1Day: 0, voyages: 0, daysAtSea: 0, reports: 0, spoiled: 0, lostValue: 0, bigShip: false,
+        visited: {}, sold: {}, alongUsed: false, typhoons: 0,
       },
+      rival: null, bounties: [],
       hist: [], seq: 0, log: [],
       sunk: false, lastDay: false, final: null,
     };
@@ -370,10 +375,14 @@
       s.mk[p] = {};
       goods.forEach(g => { s.mk[p][g] = { L: clamp(rGauss(W) * GOODS[g].vol * 2.5, -0.3, 0.3), I: 0 }; });
     });
+    initRival(s);
     // Warm up the world so the season starts mid-story.
     s.day = -5;
     for (let i = 0; i < 6; i++) { s.day++; worldTick(s); }
     s.day = 1;
+    s.rival.hist = [[1, s.rival.nw]];
+    s.st.visited[s.port] = true;
+    genBounties(s);
     snapshot(s, s.port);
     // Everyone starts the season with a free market report; after that, knowledge goes stale.
     snapshotAll(s);
@@ -463,10 +472,12 @@
     }
     if (c.q <= 0) delete s.cargo[g];
   }
+  function addSold(s, p, g, q) { const m = s.st.sold[p] || (s.st.sold[p] = {}); m[g] = (m[g] || 0) + q; }
   function afterChange(s) {
     const nw = netWorth(s);
     if (nw > s.st.peak) s.st.peak = nw;
     if (!s.st.m1Day && nw >= 1e6) s.st.m1Day = s.day;
+    if (s.bounties) checkBounties(s, false);
   }
   function log(s, text, kind) { s.log.unshift({ day: s.day, text, kind: kind || 'info' }); if (s.log.length > 60) s.log.length = 60; }
   function addNews(s, n) { n.day = s.day; n.id = ++s.seq; s.news.unshift(n); if (s.news.length > 50) s.news.length = 50; }
@@ -520,6 +531,7 @@
     s.st.bestTrade = Math.max(s.st.bestTrade, profit);
     if (g === 'durian') s.st.durianSales += qt.total;
     if (shortage && profit > 0) s.st.rumourProfit = true;
+    addSold(s, s.port, g, q);
     snapshot(s, s.port);
     afterChange(s);
     return { ok: true, q, total: qt.total, avg: qt.avg, profit, move: qt.move };
@@ -578,13 +590,100 @@
     if (lead > 0) addNews(s, { kind: 'forecast', text: 'Brokers expect within days: ' + def.text.charAt(0).toLowerCase() + def.text.slice(1) + '.', good: def.good, rk: e.kind });
     else { e.announced = true; addNews(s, { kind: e.kind, text: def.text, good: def.good, ev: e.id, end: e.end }); }
   }
+  /* ================= Rival ================= */
+  function initRival(s) {
+    const W = s.rngW;
+    const target = 2000000 * (1 + 0.15 * s.level) * (0.8 + rnd(W) * 0.45) * (s.twist === 'windfall' ? 1.3 : 1) * (s.maxDays / 60);
+    s.rival = { nw: 50000, target: Math.round(target), next: rInt(W, 1, 3), moves: 0, walk: 0, hist: [] };
+  }
+  function rivalCurve(s, day) { const x = clamp(day / s.maxDays, 0, 1); return 50000 + (s.rival.target - 50000) * Math.pow(x, 1.7); }
+  function rivalTick(s) {
+    const R = s.rival, W = s.rngW;
+    R.walk = clamp(R.walk * 0.9 + rGauss(W) * 0.035, -0.18, 0.18);
+    R.nw = Math.round(rivalCurve(s, Math.max(0, s.day)) * Math.exp(R.walk));
+    if (s.day >= 1) R.hist.push([s.day, R.nw]);
+    if (s.day >= R.next) { rivalMove(s); R.next = s.day + rInt(W, 2, 4); }
+  }
+  function rivalFinal(s) { return s.day >= s.maxDays ? s.rival.nw : Math.round(rivalCurve(s, s.maxDays) * Math.exp(s.rival.walk)); }
+  function rivalMove(s) {
+    const W = s.rngW;
+    const r1 = rnd(W), m1 = rnd(W), m2 = rnd(W), d1 = rInt(W, 3, 5), d2 = rInt(W, 4, 7), lead = rInt(W, 2, 4);
+    const lanes = [];
+    s.goods.forEach(g => {
+      if (GOODS[g].perish) return;
+      s.ports.forEach(a => s.ports.forEach(b => { if (a !== b && PF[b][g] / PF[a][g] >= 1.3) lanes.push({ g, a, b, r: PF[b][g] / PF[a][g] }); }));
+    });
+    if (!lanes.length) return;
+    lanes.sort((x, y) => y.r - x.r || (x.g + x.a + x.b < y.g + y.a + y.b ? -1 : 1));
+    const L = lanes[Math.floor(r1 * Math.min(10, lanes.length))];
+    if (s.events.some(e => e.good === L.g && (e.port === L.a || e.port === L.b) && e.end >= s.day)) return;
+    const gl = GOODS[L.g].name.toLowerCase();
+    const e1 = { id: ++s.seq, scope: 'local', rival: true, port: L.a, good: L.g, kind: 'squeeze', mult: 1.12 + m1 * 0.14, start: s.day, end: s.day + d1 - 1, headline: RIVAL.name + '’s junks buy up ' + gl + ' in ' + PORTS[L.a].name, rumoured: false, announced: true };
+    const e2 = { id: ++s.seq, scope: 'local', rival: true, port: L.b, good: L.g, kind: 'dump', mult: 0.7 + m2 * 0.14, start: s.day + lead, end: s.day + lead + d2 - 1, headline: RIVAL.name + '’s fleet dumps ' + gl + ' in ' + PORTS[L.b].name, rumoured: true };
+    s.events.push(e1, e2);
+    addNews(s, { kind: 'rival', text: RIVAL.name + ' loads ' + gl + ' in ' + PORTS[L.a].name + ', bound for ' + PORTS[L.b].name + '. Expect a glut there from about day ' + e2.start + '.', port: L.b, good: L.g, ev: e1.id, end: e1.end });
+    s.rival.moves++;
+  }
+
+  /* ================= Bounties ================= */
+  function makeBounty(s, type) {
+    const W = s.rngW;
+    const half = Math.round(s.maxDays / 2);
+    const b = { id: type, type, lp: BOUNTY_LP[type], done: false, failed: false, p: {} };
+    if (type === 'deliver') {
+      const goods = s.goods.filter(g => !GOODS[g].perish);
+      const g = goods[Math.floor(rnd(W) * goods.length)];
+      const dests = s.ports.filter(p => PF[p][g] >= 1.12);
+      const p = dests.length ? dests[Math.floor(rnd(W) * dests.length)] : s.ports[0];
+      const q = rInt(W, 12, 25) * 10, d = Math.min(s.maxDays - 4, rInt(W, half - 8, half + 4));
+      b.p = { g, port: p, q, day: d };
+      b.text = 'Sell ' + q + ' t of ' + GOODS[g].name.toLowerCase() + ' in ' + PORTS[p].name + ' by day ' + d;
+    } else if (type === 'ports') { b.p = { n: Math.min(6, s.ports.length) }; b.text = 'Drop anchor in ' + b.p.n + ' different ports'; }
+    else if (type === 'bigsale') { b.p = { x: 400000 }; b.text = 'Make a single sale worth ' + rm(b.p.x); }
+    else if (type === 'profit') { b.p = { x: 150000 }; b.text = 'Clear ' + rm(b.p.x) + ' profit on one sale'; }
+    else if (type === 'contracts') { b.p = { n: 3 }; b.text = 'Deliver 3 contracts'; }
+    else if (type === 'nwby') { b.p = { x: 1e6, day: half }; b.text = 'Be worth ' + rm(1e6) + ' by day ' + half; }
+    else if (type === 'hull') { b.p = { x: 80 }; b.text = 'Finish the season with the hull at 80% or better'; }
+    else if (type === 'rivalby') { b.p = { day: half }; b.text = 'Be worth more than ' + RIVAL.name + ' on day ' + half; }
+    else if (type === 'nodebt') { b.text = 'Never borrow from the Ah Long'; }
+    return b;
+  }
+  function genBounties(s) {
+    const W = s.rngW;
+    const pool = Object.keys(BOUNTY_LP);
+    const picks = [];
+    while (picks.length < 3) picks.push(pool.splice(Math.floor(rnd(W) * pool.length), 1)[0]);
+    s.bounties = picks.map(t => makeBounty(s, t));
+  }
+  function checkBounties(s, atEnd) {
+    const got = [];
+    (s.bounties || []).forEach(b => {
+      if (b.done || b.failed) return;
+      const P = b.p; let ok = false, bad = false;
+      switch (b.type) {
+        case 'deliver': ok = ((s.st.sold[P.port] || {})[P.g] || 0) >= P.q; bad = !ok && s.day > P.day; break;
+        case 'ports': ok = Object.keys(s.st.visited).length >= P.n; break;
+        case 'bigsale': ok = s.st.maxSale >= P.x; break;
+        case 'profit': ok = s.st.bestTrade >= P.x; break;
+        case 'contracts': ok = s.st.contracts >= P.n; break;
+        case 'nwby': ok = s.day <= P.day && netWorth(s) >= P.x; bad = !ok && s.day > P.day; break;
+        case 'hull': ok = atEnd && !s.sunk && s.ship.cond >= P.x; bad = atEnd && !ok; break;
+        case 'rivalby': if (s.day >= P.day && b.check === undefined) { b.check = netWorth(s) > s.rival.nw; ok = b.check; bad = !ok; } break;
+        case 'nodebt': bad = s.st.alongUsed; ok = atEnd && !bad; break;
+      }
+      if (ok) { b.done = true; b.doneDay = s.day; got.push(b); }
+      else if (bad || atEnd) b.failed = true;
+    });
+    return got;
+  }
+
   function worldTick(s) {
     const W = s.rngW;
     s.goods.forEach(g => { s.G[g] = clamp(s.G[g] * 0.95 + rGauss(W) * GOODS[g].gvol, -0.45, 0.45); });
     s.ports.forEach(p => s.goods.forEach(g => {
       const m = s.mk[p][g];
       m.L = clamp(m.L * 0.88 + rGauss(W) * GOODS[g].vol, -0.5, 0.5);
-      m.I *= 0.8; if (Math.abs(m.I) < 0.001) m.I = 0;
+      m.I *= 0.9; if (Math.abs(m.I) < 0.001) m.I = 0;
     }));
     s.events.forEach(e => { if (e.start === s.day && !e.announced) { e.announced = true; if (!s.news.some(n => n.ev === e.id && n.kind !== 'rumour')) addNews(s, { kind: e.kind, text: e.headline, port: e.port, good: e.good, ev: e.id, end: e.end }); } });
     s.events = s.events.filter(e => e.end >= s.day);
@@ -592,6 +691,7 @@
     if (rnd(W) < 0.24 * shock) spawnLocal(s, false);
     if (rnd(W) < 0.03 * shock) spawnGlobal(s);
     if (rnd(W) < (s.level >= 3 ? 0.1 : 0.06)) spawnFakeRumour(s);
+    rivalTick(s);
     if (s.day === s.monsoon.shiftDay && !s.monsoon.shifted) {
       s.monsoon.phase = s.monsoon.phase === 'NE' ? 'SW' : 'NE';
       s.monsoon.shifted = true;
@@ -660,7 +760,7 @@
     return base * m;
   }
   function pirateP(s, region) {
-    const base = { strait: 0.028, java: 0.022, gulf: 0.008, scs: 0.01, tonkin: 0.006, ecs: 0.006 }[region] || 0.01;
+    const base = { strait: 0.05, java: 0.04, gulf: 0.016, scs: 0.02, tonkin: 0.014, ecs: 0.014 }[region] || 0.02;
     let m = 0.4 + Math.min(1, cargoCostValue(s) / 250000) * 0.8;
     if (s.level >= 6) m *= 1.4;
     if (s.ship.up.security) m *= 0.6;
@@ -731,6 +831,7 @@
   }
   function progress(s) { const v = s.voyage; return v ? clamp(v.idx / v.days, 0, 1) : 0; }
   function mkEvent(type, title, text, choices, ctx) { return { type, title, text, choices, ctx: ctx || {} }; }
+  function founderP(s, typhoon) { const c = s.ship.cond; return c >= 40 ? 0 : (typhoon ? 0.32 : 0.16) * (1 - c / 40); }
   function stormLossP(s, typhoon) { return clamp(0.95 - hullEff(s) * 0.8 + (typhoon ? 0.15 : 0), 0.1, 0.9); }
   function runChance(s) { return clamp(0.3 + (shipSpeed(s) - 10) * 0.06 + (s.ship.up.security ? 0.2 : 0), 0.15, 0.9); }
   function rollSeaEvent(s, sg) {
@@ -750,7 +851,7 @@
     return mkEvent('storm', typhoon ? 'Typhoon warning' : 'Squall line ahead',
       typhoon ? 'The barometer is in free fall. A typhoon is crossing your track in the ' + REGION_NAMES[sg.region] + '.' : 'Black clouds are stacked to the horizon and the swell is building in the ' + REGION_NAMES[sg.region] + '.',
       [
-        { id: 'push', label: 'Push through', sub: has ? Math.round(pLoss * 100) + '% chance of losing cargo' + (s.voyage && s.voyage.insured ? ' (insured)' : ' (not insured)') : 'Expect some hull damage' },
+        { id: 'push', label: 'Push through', sub: (has ? Math.round(pLoss * 100) + '% chance of losing cargo' + (s.voyage && s.voyage.insured ? ' (insured)' : ' (not insured)') : 'Expect some hull damage') + (founderP(s, typhoon) > 0 ? '. Hull at ' + Math.round(s.ship.cond) + '%: ' + Math.round(founderP(s, typhoon) * 100) + '% chance she founders' : '') },
         { id: 'wait', label: 'Heave to (+' + wait + ' day' + (wait > 1 ? 's' : '') + ')', sub: 'Much safer, costs time' },
       ], { typhoon, wait });
   }
@@ -852,13 +953,15 @@
     let out = '', tone = 'info';
     switch (e.type) {
       case 'storm': {
-        s.st.storms++;
+        s.st.storms++; if (ctx.typhoon) s.st.typhoons++;
         if (choiceId === 'push') {
           const lines = [];
+          if (ctx.typhoon) s.st.typhoonPush = true;
+          if (rnd(L) < founderP(s, ctx.typhoon)) { s.ship.cond = 0; s.pending = null; return sink(s); }
           if (cargoUsed(s) > 0 && rnd(L) < stormLossP(s, ctx.typhoon)) { lines.push(loseCargo(s, rRange(L, 0.1, 0.28) * (ctx.typhoon ? 1.5 : 1), 'the storm')); tone = 'bad'; }
           else if (cargoUsed(s) > 0) { lines.push('The lashings hold. Not a crate lost.'); tone = 'good'; }
           else lines.push('You punch through the worst of it.');
-          const d = damage(s, rRange(L, 3, 10) * (ctx.typhoon ? 1.7 : 1) * (1.25 - hullEff(s)));
+          const d = damage(s, rRange(L, 5, 14) * (ctx.typhoon ? 1.8 : 1) * (1.3 - hullEff(s)));
           if (d) lines.push('Hull condition −' + d + '%.');
           out = lines.join(' ');
         } else {
@@ -973,6 +1076,7 @@
   function arrive(s) {
     const v = s.voyage;
     s.port = v.to; s.phase = 'port'; s.voyage = null;
+    s.st.visited[s.port] = true;
     const rep = { port: s.port, day: s.day, lines: [], fee: 0, delivered: [] };
     const fee = portFee(s); s.cash -= fee; s.st.fees += fee; rep.fee = fee;
     snapshot(s, s.port);
@@ -982,6 +1086,7 @@
       if (c && c.q >= k.qty) {
         const basis = c.cost * k.qty, pay = k.qty * k.pay;
         removeCargo(s, k.good, k.qty);
+        addSold(s, s.port, k.good, k.qty);
         s.cash += pay; s.st.contracts++; s.st.contractPay += pay;
         s.contracts.splice(s.contracts.indexOf(k), 1);
         rep.delivered.push({ good: k.good, qty: k.qty, pay, profit: pay - basis });
@@ -1065,7 +1170,7 @@
     amt = Math.floor(amt);
     if (amt <= 0 || amt > alongLimit(s)) return fail('He won’t lend you that much');
     if (s.along <= 0) s.alongDue = s.day + 10;
-    s.along += amt; s.cash += amt; s.st.borrowed = true;
+    s.along += amt; s.cash += amt; s.st.borrowed = true; s.st.alongUsed = true;
     afterChange(s);
     return { ok: true };
   }
@@ -1172,6 +1277,12 @@
       ? 'Complete a voyage to earn season Legacy. Shipwrecks at sea also count.'
       : rewardFraction < 1 ? 'Season Legacy is scaled to the days played. A season with a completed voyage or shipwreck earns at least 1 LP.' : '';
     const f = { nw, cash: Math.round(s.cash), sold: Math.round(sold), ship, debts, rank, rankName: RANKS[rank].name, lp: base, lpBase: base, streakBonus: 0, levelUp: false, newAch: [], day: s.day, rewardEligible, rewardFraction, rewardNote };
+    checkBounties(s, true);
+    f.rivalNW = rivalFinal(s);
+    f.beatRival = nw > f.rivalNW;
+    f.rivalLP = rewardEligible && f.beatRival ? Math.round(8 * (1 + 0.2 * s.level)) : 0;
+    f.bountyLP = rewardEligible ? (s.bounties || []).filter(b => b.done).reduce((a, b) => a + b.lp, 0) : 0;
+    f.lp = base + f.rivalLP + f.bountyLP;
     s.final = f;
     if (meta) {
       const m = meta.stats;
@@ -1194,7 +1305,7 @@
         while (keys.length > 60) { const k = keys.shift(); delete d.best[k]; delete d.plays[k]; }
       }
       if (rewardEligible && s.mode === 'normal' && s.level === meta.levelMax && rank >= MERCHANT_RANK && meta.levelMax < 10) { meta.levelMax++; f.levelUp = meta.levelMax; }
-      f.lp = base + f.streakBonus;
+      f.lp = base + f.streakBonus + f.rivalLP + f.bountyLP;
       meta.lp += f.lp; meta.lpTotal += f.lp;
       meta.history.unshift({ t: Date.now(), mode: s.mode, date: s.dateKey, captain: s.captain, level: s.level, nw, rank, twist: s.twist });
       if (meta.history.length > 40) meta.history.length = 40;
@@ -1230,6 +1341,10 @@
     { id: 'rough', name: 'Rough Seas', desc: 'Finish Monsoon Level 3 as Merchant or better.', lp: 15, test: (s, m, end) => end && s && s.final && s.level >= 3 && s.final.rank >= MERCHANT_RANK },
     { id: 'storm_born', name: 'Storm Born', desc: 'Finish Monsoon Level 6 as Merchant or better.', lp: 25, test: (s, m, end) => end && s && s.final && s.level >= 6 && s.final.rank >= MERCHANT_RANK },
     { id: 'master', name: 'Master of Monsoons', desc: 'Finish Monsoon Level 10 as Merchant or better.', lp: 50, test: (s, m, end) => end && s && s.final && s.level >= 10 && s.final.rank >= MERCHANT_RANK },
+    { id: 'rival_beat', name: 'Upstart', desc: 'Finish a season worth more than Towkay Lim.', lp: 10, test: (s, m, end) => end && s && s.final && s.final.beatRival },
+    { id: 'rival_crush', name: 'Hostile Takeover', desc: 'Finish worth at least twice as much as Towkay Lim.', lp: 20, test: (s, m, end) => end && s && s.final && s.final.nw >= 2 * s.final.rivalNW },
+    { id: 'clean_sweep', name: 'Clean Sweep', desc: 'Complete all three bounties in one season.', lp: 15, test: s => s && s.bounties && s.bounties.length === 3 && s.bounties.every(b => b.done) },
+    { id: 'typhoon', name: 'Eye of the Storm', desc: 'Push through a typhoon.', lp: 10, test: s => s && s.st.typhoonPush },
     { id: 'full_crew', name: 'Full Crew', desc: 'Unlock every captain.', lp: 20, test: (s, m) => CAPTAIN_IDS.every(c => !CAPTAINS[c].unlock || m.unlocks[CAPTAINS[c].unlock]) },
   ];
   function checkAch(s, meta, atEnd) {
@@ -1405,7 +1520,29 @@
       if (e.type !== 'customs') saveRequire(s.phase === 'sea' && s.voyage);
     }
     saveRequire(Number.isFinite(netWorth(s)));
+    upgradeRun(s);
     return s;
+  }
+  // v2 additions (rival, bounties, voyage stats) are optional in saves: older seasons gain a rival and no bounties.
+  function upgradeRun(s) {
+    const st = s.st;
+    if (!saveRecord(st.visited)) st.visited = {};
+    st.visited[s.port] = true;
+    if (!saveRecord(st.sold)) st.sold = {};
+    Object.keys(st.sold).forEach(p => { saveRequire(saveRecord(st.sold[p])); Object.keys(st.sold[p]).forEach(g => saveRequire(Number.isFinite(st.sold[p][g]))); });
+    if (typeof st.alongUsed !== 'boolean') st.alongUsed = false;
+    if (!Number.isFinite(st.typhoons)) st.typhoons = 0;
+    if (s.rival == null) {
+      initRival(s);
+      s.rival.walk = 0; s.rival.nw = Math.round(rivalCurve(s, s.day)); s.rival.next = s.day + 1;
+      s.rival.hist = [[s.day, s.rival.nw]];
+    } else {
+      saveRequire(saveRecord(s.rival)); saveNumbers(s.rival, ['nw', 'target', 'next', 'walk']);
+      saveRequire(Array.isArray(s.rival.hist) && s.rival.hist.every(h => Array.isArray(h) && h.length === 2 && h.every(Number.isFinite)));
+    }
+    if (s.bounties == null) s.bounties = [];
+    saveRequire(Array.isArray(s.bounties) && s.bounties.length <= 3);
+    s.bounties.forEach(b => saveRequire(saveRecord(b) && saveHas(BOUNTY_LP, b.type) && typeof b.text === 'string' && saveRecord(b.p) && Number.isFinite(b.lp)));
   }
   function deserializeMeta(str) {
     const m = parseSave(str), b = newMeta();
@@ -1437,7 +1574,7 @@
   }
 
   const MM = {
-    VERSION, PORTS, PORT_IDS, GOODS, GOOD_IDS, PF, SHIPS, SHIP_IDS, UPGRADES, CAPTAINS, CAPTAIN_IDS, UNLOCKS, UNLOCK_BY_ID, LEVELS, RANKS, TWISTS, ACH, NODES, EDGES, REGION_NAMES, MERCHANT_RANK,
+    VERSION, RIVAL, BOUNTY_LP, checkBounties, rivalFinal, PORTS, PORT_IDS, GOODS, GOOD_IDS, PF, SHIPS, SHIP_IDS, UPGRADES, CAPTAINS, CAPTAIN_IDS, UNLOCKS, UNLOCK_BY_ID, LEVELS, RANKS, TWISTS, ACH, NODES, EDGES, REGION_NAMES, MERCHANT_RANK,
     rm, price, tons, clamp,
     newMeta, newRun, route, planVoyage, startVoyage, stepVoyage, resolve, progress, phaseOn,
     quoteBuy, quoteSell, maxBuy, buy, sell, buyPrice, sellPrice, mid, baseMid, spreadOf, activeEvents, depthT,
