@@ -831,3 +831,24 @@ ul.chapters li { display: flex; justify-content: space-between; gap: 8px; paddin
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 .rivalbar .rv-t { font-style: normal; }
 @media (max-width: 359px) { .rivalbar .rv-t { display: none; } }
+
+/* ---- 2.3.1: steady layout after trades, desktop scrollbars ---- */
+.scroll { scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #6d7fb8 rgba(11,10,26,.6); }
+.scroll::-webkit-scrollbar { width: 8px; }
+.scroll::-webkit-scrollbar-track { background: rgba(11,10,26,.6); }
+.scroll::-webkit-scrollbar-thumb { background: #6d7fb8; border: 2px solid #0b0a1a; }
+.holdline, .best { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goods .good.flash { animation: rowflash 1.2s steps(6) both; }
+.goods .good.flash-pos { --flash: rgba(132,207,84,.45); } .goods .good.flash-neg { --flash: rgba(223,101,58,.45); }
+@keyframes rowflash { 0%, 40% { box-shadow: inset 0 0 0 2px #6d7fb8, inset 0 0 0 4px #0b0a1a, inset 0 0 0 40px var(--flash); } 100% { box-shadow: inset 0 0 0 2px #6d7fb8, inset 0 0 0 4px #0b0a1a; } }
+.done-line { color: var(--gold) !important; }
+.floater.at-hud { font-size: 20px; transform: translateX(-50%); animation: floathud 1.4s steps(8) both; }
+@keyframes floathud { from { transform: translate(-50%, 0); opacity: 1; } to { transform: translate(-50%, -14px); opacity: 0; } }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.sea-view .tip { position: absolute; left: 8px; right: 8px; bottom: 8px; margin: 0; z-index: 2; }
+.sea-side > .btn { flex: none; }
+:root:not(.kbd) :focus-visible { outline: none; }
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus, h3[tabindex="-1"]:focus, #screen:focus, [role="dialog"]:focus { outline: none; }
+.goods .good:focus-visible, .link-row:focus-visible, .destination:focus-visible { outline-offset: -4px; }
+/* The main action of a sheet stays in reach on short screens. */
+.sheet > .btn.primary.big, .sheet #tradeDyn > .btn.primary.big { position: sticky; bottom: 0; z-index: 3; box-shadow: 0 -8px 0 #1f2f6c, 0 4px 0 #1a275c; }

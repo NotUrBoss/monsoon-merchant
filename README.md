@@ -87,4 +87,4 @@ The browser suite uses actual UI controls against a Pages-style subpath, includi
 
 See `docs/interaction-review.md` and `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
 
-Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.3.0; archived company save schema is v3.
+Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.3.1; archived company save schema is v3.
