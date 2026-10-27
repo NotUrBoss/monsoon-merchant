@@ -328,9 +328,10 @@ def v2_migration_journey(page, context, url, out):
         assert migrated[key]==original[key]
     assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
     page.wait_for_function('navigator.serviceWorker.controller !== null')
-    cached=page.evaluate('''async()=>{const c=await caches.open('mm-1.3.0');return (await c.keys()).map(r=>r.url);}''')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.0.0');return (await c.keys()).map(r=>r.url);}''')
     assert any(x.endswith('/company-actions.js') for x in cached)
     assert any(x.endswith('/company-play.js') for x in cached)
+    assert all(any(x.endswith('/' + n) for x in cached) for n in ('art.js', 'pixel.js', 'sfx.js'))
     context.set_offline(True);resume(page,url)
     assert state(page)==migrated
     click(page,'advance-next')
