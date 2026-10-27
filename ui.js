@@ -1,7 +1,7 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '2.0.0';
+  const APP_VERSION = '2.1.0';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
@@ -103,6 +103,9 @@
     el.className = 'toast ' + (kind || '');
     el.innerHTML = (kind === 'ach' ? I.star : kind === 'bad' ? I.info : kind === 'good' ? I.check : I.info) + '<span>' + esc(text) + '</span>';
     host.appendChild(el);
+    // Keep at most three on screen so quick play never buries the game; achievements stay longest.
+    const live = Array.from(host.children).filter(t => !t.classList.contains('out'));
+    if (live.length > 3) live.filter(t => t !== el).sort((a, b) => (a.classList.contains('ach') ? 1 : 0) - (b.classList.contains('ach') ? 1 : 0)).slice(0, live.length - 3).forEach(t => { t.classList.add('out'); setTimeout(() => t.remove(), 300); });
     setTimeout(() => el.classList.add('out'), 2600);
     setTimeout(() => el.remove(), 3100);
   }
@@ -121,6 +124,7 @@
     map: 'Tap a port to plan a voyage. You only see live prices where you are. Elsewhere you see the last prices you heard, so check how old they are.',
     office: 'Contracts pay a premium if you deliver by a deadline. Banks lend cheaply at big ports. The Ah Long lends anywhere, at 3% a day.',
     ship: 'Bigger ships carry more but cost more to run each day. Your ship counts toward net worth at 60% of its price.',
+    company: 'Your company grows with you: warehouses at RM 150k net worth, factories at RM 500k, freight at RM 1M. Standing orders run every day, even while you sail, and never spend below your cash reserve.',
     sea: 'Each day at sea costs running costs. Storms and pirates can strike. Insurance pays back 80% of cargo you lose.',
   };
   function tip(id) {
@@ -200,12 +204,128 @@
     const officeDot = s.offers.length > 0 || s.news.some(n => n.id > UI.seenNews && n.day <= s.day && n.kind === 'rumour');
     const shipDot = MM.PORTS[s.port].yard && s.ship.cond < 60;
     const t = (id, icon, label, dot) => '<button class="tab ' + (UI.tab === id ? 'on' : '') + '" data-a="tab" data-id="' + id + '"' + (UI.tab === id ? ' aria-current="page"' : '') + '>' + icon + '<span>' + label + '</span>' + (dot ? '<i class="dot"></i>' : '') + '</button>';
-    return '<nav class="tabs">' + t('market', I.market, 'Market') + t('map', I.map, 'Map') + t('ship', I.ship, 'Ship', shipDot) + t('office', I.office, 'Office', officeDot) + '</nav>';
+    const coDot = MM.coStage(s) > (s.co.seenStage || 0);
+    return '<nav class="tabs">' + t('market', I.market, 'Market') + t('map', I.map, 'Map') + t('ship', I.ship, 'Ship', shipDot) + t('company', I.company, 'Company', coDot) + t('office', I.office, 'Office', officeDot) + '</nav>';
   }
   const EV_TAG = { shortage: 'Shortage', glut: 'Glut', boom: 'Boom', bust: 'Slump', squeeze: 'Lim buying', dump: 'Lim dumping' };
   const isUp = k => k === 'shortage' || k === 'boom' || k === 'squeeze';
   function ageLabel(age) { return age <= 0 ? 'today' : age === 1 ? '1 day old' : age + ' days old'; }
   function ageClass(age) { return age <= 1 ? 'fresh' : age <= 5 ? 'aging' : 'stale'; }
+
+
+  /* ================= Company tab ================= */
+  const STAGE_ICON = ['ship', 'warehouse', 'factory', 'route'];
+  const isProduct = g => !!MM.GOODS[g].product;
+  function goodsShown(s) { const k = MM.coStage(s); return s.goods.filter(g => !isProduct(g) || k >= 2); }
+  function coMapOpts(s) {
+    const co = s.co;
+    return { whs: Object.keys(co.wh), facs: Object.keys(co.fac), trips: co.routes.filter(r => r.trip).map(r => ({ from: r.from, to: r.to, frac: 0.3 + 0.5 * Math.min(1, (s.day - r.trip.depart) / Math.max(1, r.trip.arrive - r.trip.depart)) })) };
+  }
+  function stageCard(s) {
+    const k = MM.coStage(s), nx = MM.nextStage(s);
+    let h = '<section class="stagecard"><div class="stages">' + MM.STAGES.map((st, i) => '<div class="stg ' + (i <= k ? 'on' : '') + (i === k + 1 ? ' next' : '') + '">' + I[STAGE_ICON[i]] + '<small>' + esc(st.name) + '</small></div>').join('') + '</div>';
+    if (nx) h += '<p class="small">Next: <b>' + esc(nx.name) + '</b> when your net worth reaches ' + rm(nx.at) + '. ' + esc(nx.desc) + '</p><div class="bar"><i class="pos" style="width:' + Math.min(100, (s.st.peak / nx.at) * 100).toFixed(0) + '%"></i></div>';
+    else h += '<p class="small">Your whole supply chain is unlocked. It runs every day, even while you sail.</p>';
+    return h + '</section>';
+  }
+  function orderLabel(o) {
+    return (o.kind === 'buy' ? 'Buy ' : 'Sell ') + num(o.qty) + ' t ' + gName(o.g).toLowerCase() + ' a day · ' + (o.mode === 'cheap' ? 'when cheap' : o.mode === 'dear' ? 'when dear' : 'any price');
+  }
+  function routeStatus(s, r) {
+    if (r.trip) return 'At sea with ' + num(r.trip.q) + ' t · arrives day ' + r.trip.arrive;
+    if (r.paused) return 'Paused';
+    return 'Waiting for stock in ' + pShort(r.from);
+  }
+  function whCard(s, p) {
+    const w = s.co.wh[p], f = s.co.fac[p], k = MM.coStage(s);
+    const used = MM.whUsed(w), cap = MM.whCap(w);
+    let h = '<section class="whcard"><div class="wh-head">' + I.warehouse + '<b>' + esc(pName(p)) + '</b><small>Level ' + w.lvl + ' · ' + num(used) + '/' + num(cap) + ' t</small>' +
+      (w.lvl < MM.CO.whMaxLvl ? '<button class="btn xs" data-a="wh-up" data-p="' + p + '"' + (s.cash < MM.CO.whUpCost || !MM.canAct(s) ? ' disabled' : '') + '>+' + MM.CO.whCap + ' t · ' + rm(MM.CO.whUpCost) + '</button>' : '') + '</div>';
+    h += '<div class="bar"><i class="' + (used / cap > 0.9 ? 'warn' : 'pos') + '" style="width:' + Math.min(100, used / cap * 100).toFixed(0) + '%"></i></div>';
+    const st = Object.keys(w.stock);
+    h += '<div class="chips">' + (st.length ? st.map(g => '<span class="mini">' + gIcon(g, 'xs') + num(Math.floor(w.stock[g].q)) + ' t</span>').join('') : '<span class="small dim">No stock</span>') + '</div>';
+    if (f) {
+      const R = MM.RECIPES[f.recipe];
+      h += '<div class="facline">' + I.factory + '<span><b>' + esc(R.name) + (f.lvl > 1 ? ' · level 2' : '') + '</b><small>' + Object.keys(R.input).map(g => R.input[g] + ' ' + gName(g).toLowerCase()).join(' + ') + ' » ' + R.out + ' t ' + gName(f.recipe).toLowerCase() + ' · up to ' + R.batches * f.lvl * R.out + ' t a day</small><small class="' + (/Made/.test(f.note) ? 'pos' : 'warn') + '">' + esc(f.note || 'Starts tomorrow') + ' · made ' + num(f.made) + ' t</small></span>' +
+        (f.lvl < MM.CO.facMaxLvl ? '<button class="btn xs" data-a="fac-up" data-p="' + p + '"' + (s.cash < MM.CO.facUpCost || !MM.canAct(s) ? ' disabled' : '') + '>×2 · ' + rm(MM.CO.facUpCost) + '</button>' : '') + '</div>';
+    }
+    h += '<ul class="orders">' + w.orders.map(o => '<li class="' + o.kind + '">' + (o.kind === 'buy' ? I.down : I.up) + '<span>' + esc(orderLabel(o)) + '<small>' + num(o.done) + ' t so far</small></span><button class="icon-btn sm" data-a="order-del" data-p="' + p + '" data-id="' + o.id + '" aria-label="Remove order">' + I.close + '</button></li>').join('') + '</ul>';
+    if (w.orders.length < MM.CO.orderMax) h += '<button class="btn sm ghost" data-a="order-new" data-p="' + p + '">' + I.plus + '<span>Standing order</span></button>';
+    return h + '</section>';
+  }
+  function tabCompany() {
+    const s = run, co = s.co, k = MM.coStage(s);
+    if ((co.seenStage || 0) < k) co.seenStage = k;
+    let h = tip('company') + stageCard(s);
+    if (k === 0) return h + '<section class="muted-box">' + I.company + '<p>Trade your way to ' + rm(MM.STAGES[1].at) + ' net worth to open your first warehouse. Then factories and freight follow, and your company starts earning while you sail.</p></section>';
+    h += '<section class="co-sum"><div><small>Company value</small><b>' + rm(MM.coValue(s, false)) + '</b></div><div><small>Upkeep a day</small><b>' + rm(MM.coDaily(s)) + '</b></div><div><small>Made</small><b>' + num(co.made) + ' t</b></div></section>';
+    h += '<section><h3 class="sec">Cash reserve <small>automation never spends below it</small></h3><div class="seg reserve">' + [0, 20000, 50000, 100000, 250000].map(v => '<button class="' + (co.reserve === v ? 'on' : '') + '" data-a="reserve" data-v="' + v + '">' + (v ? rm(v).replace('RM ', '') : 'None') + '</button>').join('') + '</div></section>';
+    // here
+    if (s.phase === 'port') {
+      const here = co.wh[s.port];
+      let a = '';
+      if (!here) a = '<button class="btn primary" data-a="wh-build"' + (s.cash < MM.CO.whCost ? ' disabled' : '') + '>' + I.warehouse + '<span>Rent a warehouse in ' + esc(pShort(s.port)) + ' · ' + rm(MM.CO.whCost) + '</span></button><p class="small dim">' + num(MM.CO.whCap) + ' t of storage, ' + rm(MM.CO.whUpkeep) + ' a day.</p>';
+      else if (k >= 2 && !co.fac[s.port]) a = '<button class="btn primary" data-a="fac-sheet">' + I.factory + '<span>Build a factory in ' + esc(pShort(s.port)) + '</span></button>';
+      else if (k < 2 && !co.fac[s.port]) a = '<p class="small dim">Factories unlock at ' + rm(MM.STAGES[2].at) + '.</p>';
+      if (a) h += '<section class="here"><h3 class="sec">Here in ' + esc(pName(s.port)) + '</h3>' + a + '</section>';
+    }
+    const ports = Object.keys(co.wh);
+    h += '<section><h3 class="sec">Warehouses <small>' + ports.length + '</small></h3>' + (ports.length ? ports.map(p => whCard(s, p)).join('') : '<p class="empty">No warehouses yet. Sail to a port where you buy often and rent one there.</p>') + '</section>';
+    if (k >= 3) {
+      h += '<section><h3 class="sec">Freight routes <small>' + co.routes.length + '/' + MM.CO.routeMax + '</small></h3>';
+      h += co.routes.map(r => { const q = MM.routeQuote(s, r.from, r.to, r.qty); return '<div class="route-row ' + (r.trip ? 'moving' : '') + '">' + I.route + '<span><b>' + esc(pShort(r.from)) + ' » ' + esc(pShort(r.to)) + ' · ' + num(r.qty) + ' t ' + esc(gName(r.g).toLowerCase()) + '</b><small>' + (r.dest === 'wh' ? 'To your warehouse' : 'Sell at market') + ' · ' + plural(q.days, 'day') + ' · ' + rm(q.cost) + ' a trip · ' + plural(r.trips, 'trip') + ' done</small><small>' + esc(routeStatus(s, r)) + '</small></span>' +
+        '<button class="btn xs" data-a="route-pause" data-id="' + r.id + '">' + (r.paused ? 'Resume' : 'Pause') + '</button><button class="icon-btn sm" data-a="route-del" data-id="' + r.id + '" aria-label="Remove route"' + (r.trip ? ' disabled' : '') + '>' + I.close + '</button></div>'; }).join('');
+      if (co.routes.length < MM.CO.routeMax) h += '<button class="btn sm ghost" data-a="route-new"' + (ports.length ? '' : ' disabled') + '>' + I.plus + '<span>New freight route</span></button>';
+      h += '</section>';
+    } else h += '<p class="small dim center-note">Freight routes unlock at ' + rm(MM.STAGES[3].at) + '.</p>';
+    return h;
+  }
+  function chipRow(action, items, current, label) {
+    return '<div class="chips pick">' + items.map(it => '<button class="chip-btn ' + (String(it.v) === String(current) ? 'on' : '') + '" data-a="' + action + '" data-v="' + esc(it.v) + '"' + (it.dis ? ' disabled' : '') + (label ? ' aria-label="' + esc(label + ' ' + it.t) + '"' : '') + '>' + (it.icon || '') + '<span>' + esc(it.t) + '</span></button>').join('') + '</div>';
+  }
+  function orderSheet() {
+    const s = run, o = UI.sheet, w = s.co.wh[o.p];
+    const goods = goodsShown(s).filter(g => !MM.GOODS[g].perish);
+    const v = MM.vsAvg(s, o.p, o.g);
+    let h = '<header class="sh-head"><span class="ul-ic">' + I.warehouse + '</span><div><h3>Standing order</h3><small>' + esc(pName(o.p)) + ' warehouse · runs every day</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
+    h += '<div class="seg"><button class="' + (o.kind === 'buy' ? 'on' : '') + '" data-a="ord-kind" data-v="buy">Buy</button><button class="' + (o.kind === 'sell' ? 'on' : '') + '" data-a="ord-kind" data-v="sell">Sell</button></div>';
+    h += '<h4 class="sub">Cargo</h4>' + chipRow('ord-g', goods.map(g => ({ v: g, t: gName(g), icon: gIcon(g, 'xs') })), o.g);
+    h += '<h4 class="sub">Tonnes a day</h4>' + chipRow('ord-q', [5, 10, 25, 50, 100, 200].map(n => ({ v: n, t: n + ' t' })), o.qty);
+    h += '<h4 class="sub">When</h4>' + chipRow('ord-m', (o.kind === 'buy' ? [{ v: 'cheap', t: 'Only when cheap' }, { v: 'any', t: 'Any price' }] : [{ v: 'dear', t: 'Only when dear' }, { v: 'any', t: 'Any price' }]), o.mode);
+    h += '<p class="small">Today in ' + esc(pShort(o.p)) + ': ' + gName(o.g) + ' ' + (o.kind === 'buy' ? 'costs ' + num(MM.buyPrice(s, o.p, o.g)) : 'sells for ' + num(MM.sellPrice(s, o.p, o.g))) + ' <span class="' + (v < -0.1 ? 'pos' : v > 0.1 ? 'warn' : 'dim') + '">(' + pct(v) + ' vs average)</span>. "Cheap" means 10% or more below average, "dear" 10% or more above.</p>';
+    if (o.kind === 'sell') h += '<p class="small dim">In stock: ' + num(w.stock[o.g] ? Math.floor(w.stock[o.g].q) : 0) + ' t.</p>';
+    return sheetWrap(h + '<button class="btn primary big" data-a="ord-save">Save order</button>', 'order');
+  }
+  function factorySheet() {
+    const s = run, p = s.port;
+    let h = '<header class="sh-head"><span class="ul-ic">' + I.factory + '</span><div><h3>Build a factory</h3><small>' + esc(pName(p)) + ' · ' + rm(MM.CO.facCost) + ' · ' + rm(MM.CO.facUpkeep) + ' a day</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
+    h += '<p class="blurb">It uses inputs from your warehouse here and puts the product back into it, every day. Add standing buy orders for the inputs and a sell order or freight route for the product.</p><ul class="recipes">';
+    Object.keys(MM.RECIPES).forEach(id => {
+      const R = MM.RECIPES[id];
+      const cost = Object.keys(R.input).reduce((t, g) => t + R.input[g] * MM.buyPrice(s, p, g), 0) / R.out;
+      const best = MM.bestKnownSell(s, id, null);
+      const locked = Object.keys(R.input).some(g => s.goods.indexOf(g) < 0);
+      h += '<li class="recipe"><div class="rc-io">' + Object.keys(R.input).map(g => '<span>' + R.input[g] + '×' + gIcon(g, 'xs') + '</span>').join('+') + '<span>»</span><span>' + R.out + '×' + gIcon(id, 'xs') + '</span></div><div class="rc-main"><b>' + esc(R.name) + ' · ' + esc(gName(id)) + '</b><small>Inputs here about ' + num(cost) + '/t of product · best known sale ' + (best ? esc(pShort(best.port)) + ' ' + num(best.price) : num(MM.GOODS[id].base) + ' average') + ' · up to ' + R.batches * R.out + ' t a day</small></div>' +
+        '<button class="btn sm primary" data-a="fac-build" data-id="' + id + '"' + (s.cash < MM.CO.facCost || locked ? ' disabled' : '') + '>Build</button></li>';
+    });
+    return sheetWrap(h + '</ul>', 'factory');
+  }
+  function routeSheet() {
+    const s = run, r = UI.sheet, co = s.co;
+    const froms = Object.keys(co.wh);
+    const w = co.wh[r.from];
+    const goods = goodsShown(s).filter(g => !MM.GOODS[g].perish).sort((a, b) => ((w.stock[b] || {}).q || 0) - ((w.stock[a] || {}).q || 0));
+    const q = MM.routeQuote(s, r.from, r.to, r.qty);
+    const k = s.known[r.to];
+    let h = '<header class="sh-head"><span class="ul-ic">' + I.route + '</span><div><h3>New freight route</h3><small>Repeats every trip until you pause it</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
+    h += '<h4 class="sub">From your warehouse</h4>' + chipRow('rt-from', froms.map(p => ({ v: p, t: pShort(p) })), r.from);
+    h += '<h4 class="sub">Cargo</h4>' + chipRow('rt-g', goods.map(g => ({ v: g, t: gName(g) + (w.stock[g] ? ' (' + num(Math.floor(w.stock[g].q)) + ')' : ''), icon: gIcon(g, 'xs') })), r.g);
+    h += '<h4 class="sub">Tonnes a trip</h4>' + chipRow('rt-q', [25, 50, 100, 150, 200].map(n => ({ v: n, t: n + ' t' })), r.qty);
+    h += '<h4 class="sub">To</h4>' + chipRow('rt-to', s.ports.filter(p => p !== r.from).map(p => ({ v: p, t: pShort(p) })), r.to);
+    h += '<div class="seg"><button class="' + (r.dest === 'mkt' ? 'on' : '') + '" data-a="rt-dest" data-v="mkt">Sell at market</button><button class="' + (r.dest === 'wh' ? 'on' : '') + '" data-a="rt-dest" data-v="wh"' + (co.wh[r.to] ? '' : ' disabled') + '>To my warehouse</button></div>';
+    h += '<dl class="facts"><div><dt>Each trip</dt><dd>' + plural(q.days, 'day') + '</dd></div><div><dt>Freight cost</dt><dd>' + rm(q.cost) + '</dd></div>' + (k ? '<div><dt>' + esc(pShort(r.to)) + ' pays</dt><dd>' + num(k.mid[r.g] * (1 - MM.spreadOf(s) / 2)) + ' <i class="' + ageClass(s.day - k.day) + '">' + ageLabel(s.day - k.day) + '</i></dd></div>' : '') + '<div><dt>Risk</dt><dd>Small, insured</dd></div></dl>';
+    return sheetWrap(h + '<button class="btn primary big" data-a="rt-save">Start route</button>', 'route');
+  }
 
   /* ================= Screens ================= */
   function screenTitle() {
@@ -230,8 +350,7 @@
       (storageWarning ? '<p class="warnline" role="status">Saving failed on this device. Copy a backup before closing the game.</p>' : '') +
       (UI.swWaiting ? '<button class="update" data-a="sw-update">' + I.spark + '<span>New version ready. <b>Tap to update</b></span></button>' : '') +
       (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season</span><small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></button>' : '') +
-      '<button class="daily-card network-entry company-entry" data-a="network"><div class="dc-l">' + I.play + '</div><div class="dc-m"><b>Play Monsoon Company <span class="new-tag">UNIFIED</span></b><small>Captain · manufacture · ship · deliver · one campaign</small></div><span aria-hidden="true">»</span></button>' +
-      '<button class="btn ghost" data-a="new-season">' + I.play + '<span>Classic captain season</span></button>' +
+      '<button class="btn ' + (normal ? 'ghost' : 'primary big') + '" data-a="new-season">' + I.play + '<span>New season</span></button>' +
       '<button class="daily-card" data-a="daily">' +
       '<div class="dc-l">' + I.calendar + '</div><div class="dc-m"><b>Daily Voyage</b><small>' + esc(prettyDate(key)) + (dailyLive ? ' · in progress, day ' + daily.day : dailyBest !== undefined ? ' · best ' + rm(dailyBest) : ' · same seas for everyone') + '</small></div>' +
       '<div class="dc-r ' + (streakNow > 0 ? 'live' : '') + '">' + I.flame + '<b>' + streakNow + '</b></div></button>' +
@@ -239,8 +358,15 @@
       '<button class="tile" data-a="legacy">' + I.spark + '<span>Legacy</span><b>' + meta.lp + ' LP</b></button>' +
       '<button class="tile" data-a="ledger">' + I.trophy + '<span>Ledger</span><b>' + Object.keys(meta.ach).length + '/' + MM.ACH.length + '</b></button>' +
       '<button class="tile" data-a="settings">' + I.gear + '<span>Settings</span><b>' + (meta.settings.music && meta.settings.sound ? 'Music on' : 'Quiet') + '</b></button>' +
-      '</div>' + install +
+      '</div>' + archiveEntry() + install +
       '</div><div class="version">v' + APP_VERSION + ' · ' + ('serviceWorker' in navigator && navigator.serviceWorker.controller ? 'works offline' : 'offline after first load') + '</div></div></div>';
+  }
+  function archiveEntry() {
+    const raw = lsGet('mm.company.v3') || lsGet('mm.company.v2') || lsGet('mm.network.v1');
+    if (!raw) return '';
+    let day = '';
+    try { const c = JSON.parse(raw); if (c && Number.isFinite(c.day)) day = ' (day ' + c.day + '/60)'; } catch (e) { /* unreadable saves still open the archive */ }
+    return '<button class="link-row archive" data-a="network">' + I.scroll + '<span>Archive: Monsoon Company<small>Finish your saved company campaign' + esc(day) + '. New ones start in a season now.</small></span></button>';
   }
   function screenSetup() {
     const st = UI.setup;
@@ -277,6 +403,7 @@
     if (UI.tab === 'market') body = tabMarket();
     else if (UI.tab === 'map') body = tabMap();
     else if (UI.tab === 'ship') body = tabShip();
+    else if (UI.tab === 'company') body = tabCompany();
     else body = tabOffice();
     return '<div class="screen run">' + hud() + '<main class="scroll" id="scroller">' + body + '</main>' + tabs() + '</div>';
   }
@@ -306,8 +433,10 @@
     if (evs.length) {
       h += '<div class="events">' + evs.map(e => '<div class="evline ' + e.kind + '">' + (e.rival ? I.sword : isUp(e.kind) ? I.up : I.down) + '<span>' + esc(e.headline) + '</span><small>until day ' + e.end + '</small></div>').join('') + '</div>';
     }
+    h += whStrip(s);
     h += '<ul class="goods">';
-    MM.marketRows(s).forEach(r => {
+    const shown = goodsShown(s);
+    MM.marketRows(s).filter(r => shown.indexOf(r.g) >= 0).forEach(r => {
       const tagCls = r.vsAvg <= -0.12 ? 'cheap' : r.vsAvg >= 0.12 ? 'dear' : 'flat';
       const ev = r.events.length ? '<span class="evtag ' + r.events[0].kind + '">' + EV_TAG[r.events[0].kind] + '</span>' : '';
       let sub;
@@ -326,6 +455,16 @@
     return h;
   }
 
+  function whStrip(s) {
+    const w = s.co.wh[s.port];
+    if (!w) return MM.coStage(s) >= 1 && s.phase === 'port' ? '<div class="banner co">' + I.warehouse + '<p><b>No warehouse here.</b> Rent one from the Company tab to store cargo and run standing orders.</p></div>' : '';
+    const goods = goodsShown(s).filter(g => (s.cargo[g] && !MM.GOODS[g].perish) || w.stock[g]);
+    let h = '<section class="whstrip"><div class="wh-head">' + I.warehouse + '<b>Your warehouse</b><small>' + num(MM.whUsed(w)) + '/' + num(MM.whCap(w)) + ' t</small></div>';
+    if (!goods.length) h += '<p class="small dim">Empty. Buy cargo, then store it here, or set a standing order in Company.</p>';
+    else h += '<ul>' + goods.map(g => { const a = s.cargo[g] ? s.cargo[g].q : 0, b = w.stock[g] ? Math.floor(w.stock[g].q) : 0; return '<li>' + gIcon(g, 'sm') + '<span><b>' + esc(gName(g)) + '</b><small>Ship ' + num(a) + ' t · Warehouse ' + num(b) + ' t</small></span>' +
+      '<button class="btn xs" data-a="wh-store" data-g="' + g + '"' + (a && MM.whFree(w) > 0 ? '' : ' disabled') + '>Store</button><button class="btn xs" data-a="wh-take" data-g="' + g + '"' + (b && MM.freeSpace(s) > 0 ? '' : ' disabled') + '>Load</button></li>'; }).join('') + '</ul>';
+    return h + '</section>';
+  }
   function priceBoard(s) {
     let h = '<section class="board"><h3 class="sec">Price board <small>from what you know</small></h3><ul>';
     s.goods.forEach(g => {
@@ -340,7 +479,7 @@
     const s = run;
     let h = tip('map');
     const sel = UI.sheet && UI.sheet.type === 'port' ? UI.sheet.p : null;
-    h += '<div class="map-box">' + mapHTML('main', { interactive: true, here: s.port, selected: sel, dests: s.contracts.map(c => c.dest), locked: lockedPorts(s), wind: s.monsoon.phase }) +
+    h += '<div class="map-box">' + mapHTML('main', Object.assign({ interactive: true, here: s.port, selected: sel, dests: s.contracts.map(c => c.dest), locked: lockedPorts(s), wind: s.monsoon.phase }, coMapOpts(s))) +
       '<div class="map-legend"><span>' + I.anchor + 'You</span><span>' + I.star + 'Contract</span><span class="windnote">' + I.wind + (s.monsoon.phase === 'NE' ? 'NE monsoon: fast going southwest' : 'SW monsoon: fast going northeast') + '</span></div></div>';
     h += '<p class="center-note">Choose a port on the chart or from the list below.</p>';
     h += '<section class="destinations"><h3 class="sec">Ports & voyages</h3><ul>' + MM.PORT_IDS.map(p => {
@@ -485,7 +624,8 @@
     // Intel
     const rc = MM.reportCost(s);
     h += '<section><h3 class="sec">Intel</h3><div class="intel"><div><b>Market report</b><small>Today’s prices from every port.</small></div><button class="btn sm" data-a="report" ' + (s.cash < rc ? 'disabled' : '') + '>' + rm(rc) + '</button></div>';
-    const feed = MM.newsFeed(s, 18);
+    const shownG = goodsShown(s);
+    const feed = MM.newsFeed(s, 40).filter(n => !n.good || shownG.indexOf(n.good) >= 0).slice(0, 18);
     h += '<ul class="newsfeed">' + (feed.length ? feed.map(n => newsItem(s, n)).join('') : '<li class="empty">Quiet on the docks.</li>') + '</ul></section>';
     // Season
     h += '<section><h3 class="sec">Season</h3><div class="season-box"><div>' + captAvatar(s.captain, 36) + '<span><b>' + esc(MM.CAPTAINS[s.captain].name) + '</b><small>' + esc(MM.CAPTAINS[s.captain].title) + (s.mode === 'daily' ? ' · Daily Voyage' : ' · Monsoon level ' + s.level) + '</small></span></div>' +
@@ -501,7 +641,7 @@
     return '<div class="screen sea">' + hud() +
       '<div class="sea-view">' + sceneHTML('sea', { ship: s.ship.cls, mode: 'sail', event: s.pending ? s.pending.type : null, rival: true, speed: UI.sea.fast ? 2 : 1 }, 'sea-scene') +
       '<div class="voyage-pill"><b>' + esc(pShort(v.from)) + ' » ' + esc(pShort(v.to)) + '</b><span>Day ' + Math.min(v.idx, v.days) + ' of ' + v.days + (v.insured ? ' · insured' : '') + '</span></div></div>' +
-      '<div class="sea-bottom"><div class="sea-mini">' + mapHTML('sea', { route: { from: v.from, to: v.to }, ship: true, frac: UI.sea.frac, locked: lockedPorts(s), wind: s.monsoon.phase, labels: false }) + '</div>' +
+      '<div class="sea-bottom"><div class="sea-mini">' + mapHTML('sea', Object.assign({ route: { from: v.from, to: v.to }, ship: true, frac: UI.sea.frac, locked: lockedPorts(s), wind: s.monsoon.phase, labels: false }, coMapOpts(s))) + '</div>' +
       '<div class="sea-side"><ul class="sealog">' + (logs.length ? logs.map(l => '<li class="' + l.kind + '"><small>Day ' + l.day + '</small><span>' + esc(l.text) + '</span></li>').join('') : '<li class="calm"><span>Fair winds. The crew settle into watches.</span></li>') + '</ul>' +
       '<button class="btn ghost sm ' + (UI.sea.fast ? 'on' : '') + '" data-a="sea-fast">' + I.fast + '<span>' + (UI.sea.fast ? 'Fast' : 'Normal') + '</span></button></div></div>' + tip('sea') + '</div>';
   }
@@ -526,7 +666,7 @@
     h += '<section class="race ' + (f.beatRival ? 'ahead' : 'behind') + ' end-race"><div class="race-top">' + captAvatar('lim', 44) + '<div><b>' + (f.beatRival ? 'You beat ' + esc(MM.RIVAL.name) + '!' : esc(MM.RIVAL.name) + ' wins this one') + '</b><small>He finished on ' + rm(f.rivalNW) + '. You: ' + rm(f.nw) + '.</small></div></div>' +
       stepChart([{ c: '#c63b3b', pts: s.rival.hist }, { c: '#ffd65c', pts: s.hist.filter(p => p[0] < s.day).concat([[s.day, f.nw]]) }], 300, 80) + '</section>';
     h += '<section><h3 class="sec">Bounties</h3>' + bountyList(s, true) + '</section>';
-    h += '<section class="breakdown"><div><small>Cash</small><b>' + rm(f.cash - f.sold) + '</b></div><div><small>Cargo sold at the end</small><b>' + rm(f.sold) + '</b></div><div><small>Ship at trade-in</small><b>' + rm(f.ship) + '</b></div><div><small>Debts</small><b class="' + (f.debts > 0 ? 'neg' : '') + '">' + (f.debts > 0 ? '−' : '') + rm(f.debts) + '</b></div></section>';
+    h += '<section class="breakdown"><div><small>Cash</small><b>' + rm(f.cash - f.sold) + '</b></div><div><small>Cargo sold at the end</small><b>' + rm(f.sold) + '</b></div><div><small>Ship at trade-in</small><b>' + rm(f.ship) + '</b></div>' + (f.company ? '<div><small>Company</small><b>' + rm(f.company) + '</b></div>' : '') + '<div><small>Debts</small><b class="' + (f.debts > 0 ? 'neg' : '') + '">' + (f.debts > 0 ? '−' : '') + rm(f.debts) + '</b></div></section>';
     const st = s.st;
     h += '<section class="statgrid"><div><b>' + st.voyages + '</b><small>voyages</small></div><div><b>' + st.trades + '</b><small>trades</small></div><div><b>' + rm(st.bestTrade) + '</b><small>best trade</small></div><div><b>' + st.contracts + '</b><small>contracts</small></div><div><b>' + st.storms + '</b><small>storms</small></div><div><b>' + st.pirates + '</b><small>pirate run-ins</small></div></section>';
     h += '<section class="lp-card"><div class="lp-big">' + I.spark + '<b>+' + (f.lp + f.newAch.reduce((a, x) => a + x.lp, 0)) + '</b><span>Legacy points</span></div><ul>' +
@@ -585,7 +725,7 @@
     let h = '<div class="screen settings">' + topbar('Settings') + '<main class="scroll">';
     h += '<section class="group">' + tog('sound', 'Sound', 'Chiptune bleeps and bloops.') + tog('music', 'Music', 'A sea shanty on loop.') + tog('haptics', 'Vibration', 'Android only. iPhones don’t allow it in web apps.') + tog('motion', 'Animations', 'Turn off for a calmer screen.') + tog('tips', 'Tips', 'Show beginner hints.') + '</section>';
     h += '<section class="group"><button class="link-row" data-a="help">' + I.help + '<span>How to play</span></button><button class="link-row" data-a="reset-tips">' + I.info + '<span>Show all tips again</span></button></section>';
-    h += '<section class="group"><h3 class="sec">Captain backup</h3><p class="small dim">Copy your captain seasons, Daily Voyage and Legacy to keep them safe. Monsoon Company has its own Backup button inside that mode.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
+    h += '<section class="group"><h3 class="sec">Captain backup</h3><p class="small dim">Copy your seasons (including your company), Daily Voyage and Legacy to keep them safe. The archived Monsoon Company campaign has its own Backup button.</p><div class="row-actions"><button class="btn sm" data-a="export">' + I.download + '<span>Copy backup code</span></button><button class="btn sm ghost" data-a="import-open">Restore…</button></div>' +
       (UI.importOpen ? '<label for="importBox">Backup code</label><textarea id="importBox" placeholder="Paste a backup code here"></textarea><button class="btn sm primary" data-a="import">Restore from code</button>' : '') + '</section>';
     h += '<section class="group"><button class="link-row danger" data-a="reset">' + I.close + '<span>Erase captain progress</span></button></section>';
     h += '<p class="about">Monsoon Merchant v' + APP_VERSION + '. Made for offline play. No ads, no accounts, no tracking.</p>';
@@ -602,6 +742,7 @@
     h += sec('Rumours and news', '<p>Shortages and gluts are often rumoured a few days before they hit. Get there while it’s happening for big profits. Some rumours are false.</p>');
     h += sec('The monsoon', '<p>The northeast monsoon speeds ships sailing southwest; the southwest monsoon speeds ships sailing northeast. Around mid-season the monsoon turns, and routes that were quick become slow. The weeks around the change bring squalls, and the southwest monsoon brings typhoons to the South China Sea.</p>');
     h += sec('Risk', '<p>Storms and pirates can cost you cargo. Insurance pays back 80% of what you lose. Storms also damage the hull. Below 40% a storm can sink her outright, so repair at a shipyard.</p>');
+    h += sec('Your company', '<p>As your net worth grows, the season unlocks your supply chain: <b>warehouses</b> at RM 150k, <b>factories</b> at RM 500k and <b>freight</b> at RM 1M. Open the Company tab to see the next step.</p><p>Warehouses store cargo and run <b>standing orders</b>: buy or sell a set amount every day, only at a good price if you like. Factories turn raw goods in their warehouse into products every day. Freight routes ship stock between your warehouses or to a market. All of it runs by itself, even while you sail, and never spends below your cash reserve.</p>');
     h += sec('The rival', '<p><b>Towkay Lim</b> trades the same seas. His net worth is shown under yours. When his junks load a cargo, the price there jumps, and a few days later he floods the port where he unloads. Beat him by the end of the season for bonus Legacy.</p>');
     h += sec('Bounties', '<p>Each season comes with three bounties, like selling a cargo in a certain port by a deadline. Each one you complete pays Legacy at the end of the season. Find them in the Office.</p>');
     h += sec('Money', '<p>Contracts pay a premium for delivering by a deadline. Miss it and you pay a penalty. Banks lend at about 0.25% a day at big ports. The Ah Long lends anywhere at 3% a day and wants it back within 10 days.</p>');
@@ -744,7 +885,7 @@
     const row = (a, icon, label, sub, cls) => '<button class="link-row ' + (cls || '') + '" data-a="' + a + '">' + icon + '<span>' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span></button>';
     return sheetWrap('<header class="sh-head"><span class="ul-ic">' + I.anchor + '</span><div><h3>' + (s.mode === 'daily' ? 'Daily Voyage' : 'Season') + '</h3><small>Day ' + s.day + ' of ' + s.maxDays + ' · ' + esc(MM.CAPTAINS[s.captain].name) + (s.mode === 'daily' ? '' : ' · level ' + s.level) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>' +
       '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Save your voyage to pick it up later.') +
-      row('export', I.download, 'Copy backup code', 'Backs up captain seasons, Daily Voyage and Legacy. Monsoon Company uses its own Backup button.') +
+      row('export', I.download, 'Copy backup code', 'Backs up seasons with their company, Daily Voyage and Legacy. The archived company campaign uses its own Backup button.') +
       row('help-run', I.help, 'How to play', '') +
       row('toggle-sound', I.sound, 'Sound: ' + (meta.settings.sound ? 'on' : 'off'), '') +
       row('toggle-music', I.music, 'Music: ' + (meta.settings.music ? 'on' : 'off'), '') +
@@ -823,6 +964,9 @@
       else if (UI.sheet.type === 'confirm') h = confirmSheet();
       else if (UI.sheet.type === 'info') h = infoSheet();
       else if (UI.sheet.type === 'menu') h = menuSheet();
+      else if (UI.sheet.type === 'order') h = orderSheet();
+      else if (UI.sheet.type === 'factory') h = factorySheet();
+      else if (UI.sheet.type === 'route') h = routeSheet();
     }
     unmount(UI.owidgets);
     host.innerHTML = h;
@@ -887,6 +1031,8 @@
   /* ================= Flow ================= */
   function afterAction() {
     if (run) {
+      const stg = MM.coStage(run);
+      if (stg > (run.co.toldStage || 0)) { run.co.toldStage = stg; Sound.levelup(); toast('Unlocked: ' + MM.STAGES[stg].name + '. See the Company tab.', 'ach'); }
       const got = MM.checkAch(run, meta, false);
       if (got.length) { Sound.ach(); buzz([20, 40, 20]); got.forEach(a => toast('Achievement: ' + a.name + ' · +' + a.lp + ' Legacy', 'ach')); }
       (run.bounties || []).forEach(b => { if (b.done && !b.told) { b.told = true; Sound.levelup(); toast('Bounty done: ' + b.text + ' · +' + b.lp + ' Legacy', 'ach'); } else if (b.failed && !b.told && run.phase !== 'ended') { b.told = true; toast('Bounty missed: ' + b.text, 'bad'); } });
@@ -984,7 +1130,7 @@
       stopSea(); stopShip(); UI.sheet = null; UI.modal = null; run = null; UI.slot = null;
       unmount(UI.widgets); unmount(UI.owidgets);
       renderOverlay(); UI.screen = 'network';
-      window.MMNetworkUI.open({ root, onExit() { UI.screen = 'title'; render(); focusWithin(document.getElementById('screen')); } });
+      window.MMNetworkUI.open({ root, archive: true, onExit() { UI.screen = 'title'; render(); focusWithin(document.getElementById('screen')); } });
     },
     'go-title'() { if (run && !saveRun()) return; stopSea(); stopShip(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
     continue(d) { const s = loadSlot(d.slot); if (s) enterRun(d.slot, s); else render(); },
@@ -1084,6 +1230,40 @@
       if (best) { UI.sheet = { type: 'port', p: best }; Sound.cursor(); mv.set({ selected: best }); el.querySelectorAll('.lbl').forEach(l => l.classList.toggle('sel', l.textContent === pShort(best))); renderOverlay(); }
     },
     port(d) { if (!MM.PORTS[d.p]) return; UI.sheet = { type: 'port', p: d.p }; Sound.tap(); renderOverlay(); },
+
+    'wh-build'() { coAct(MM.buildWarehouse(run), 'Warehouse opened. Store cargo from the Market tab or add standing orders.'); },
+    'wh-up'(d) { coAct(MM.upgradeWarehouse(run, d.p), 'Warehouse enlarged.'); },
+    'wh-store'(d) { const r = MM.storeCargo(run, d.g, run.cargo[d.g] ? run.cargo[d.g].q : 0); coAct(r, r.ok ? 'Stored ' + num(r.q) + ' t ' + gName(d.g).toLowerCase() + '.' : ''); },
+    'wh-take'(d) { const w = run.co.wh[run.port]; const r = MM.takeCargo(run, d.g, w && w.stock[d.g] ? w.stock[d.g].q : 0); coAct(r, r.ok ? 'Loaded ' + num(r.q) + ' t ' + gName(d.g).toLowerCase() + '.' : ''); },
+    'fac-sheet'() { UI.sheet = { type: 'factory' }; Sound.tap(); renderOverlay(); },
+    'fac-build'(d) { UI.sheet = null; const r = MM.buildFactory(run, d.id); if (r.ok) Sound.fanfare(); coAct(r, 'Factory built. Feed it with standing buy orders.'); },
+    'fac-up'(d) { coAct(MM.upgradeFactory(run, d.p), 'Factory doubled.'); },
+    'order-new'(d) {
+      const w = run.co.wh[d.p], fac = run.co.fac[d.p];
+      const g = fac ? Object.keys(MM.RECIPES[fac.recipe].input).find(x => !w.orders.some(o => o.g === x && o.kind === 'buy')) : null;
+      UI.sheet = { type: 'order', p: d.p, kind: 'buy', g: g || goodsShown(run).find(x => !MM.GOODS[x].perish), qty: 25, mode: 'cheap' }; Sound.tap(); renderOverlay();
+    },
+    'ord-kind'(d) { UI.sheet.kind = d.v; UI.sheet.mode = d.v === 'buy' ? 'cheap' : 'dear'; renderOverlay(); },
+    'ord-g'(d) { UI.sheet.g = d.v; renderOverlay(); },
+    'ord-q'(d) { UI.sheet.qty = +d.v; renderOverlay(); },
+    'ord-m'(d) { UI.sheet.mode = d.v; renderOverlay(); },
+    'ord-save'() { const o = UI.sheet; const r = MM.setOrder(run, o.p, o.kind, o.g, o.qty, o.mode); if (r.ok) UI.sheet = null; coAct(r, 'Standing order saved. It runs from tomorrow.'); },
+    'order-del'(d) { coAct(MM.removeOrder(run, d.p, +d.id), 'Order removed.'); },
+    'route-new'() {
+      const co = run.co, from = co.wh[run.port] ? run.port : Object.keys(co.wh)[0];
+      const st = co.wh[from].stock, g = Object.keys(st).sort((a, b) => st[b].q - st[a].q)[0] || goodsShown(run)[0];
+      let to = run.ports.filter(p => p !== from).sort((a, b) => MM.PF[b][g] - MM.PF[a][g])[0];
+      UI.sheet = { type: 'route', from, g, qty: 100, to, dest: 'mkt' }; Sound.tap(); renderOverlay();
+    },
+    'rt-from'(d) { const r = UI.sheet; r.from = d.v; if (r.to === d.v) r.to = run.ports.find(p => p !== d.v); if (r.dest === 'wh' && !run.co.wh[r.to]) r.dest = 'mkt'; renderOverlay(); },
+    'rt-g'(d) { UI.sheet.g = d.v; renderOverlay(); },
+    'rt-q'(d) { UI.sheet.qty = +d.v; renderOverlay(); },
+    'rt-to'(d) { UI.sheet.to = d.v; if (UI.sheet.dest === 'wh' && !run.co.wh[d.v]) UI.sheet.dest = 'mkt'; renderOverlay(); },
+    'rt-dest'(d) { UI.sheet.dest = d.v; renderOverlay(); },
+    'rt-save'() { const r = UI.sheet; const res = MM.addRoute(run, r.from, r.to, r.g, r.qty, r.dest); if (res.ok) UI.sheet = null; coAct(res, 'Route started. The first trip leaves when the stock is ready.'); },
+    'route-pause'(d) { const r = MM.pauseRoute(run, +d.id); coAct(r, r.ok && r.paused ? 'Route paused.' : 'Route resumed.'); },
+    'route-del'(d) { coAct(MM.removeRoute(run, +d.id), 'Route removed.'); },
+    reserve(d) { coAct(MM.setReserve(run, +d.v), 'Cash reserve set to ' + rm(+d.v) + '.'); },
     'rival-info'() { UI.sheet = { type: 'info', title: MM.RIVAL.name, icon: I.sword, html: raceCard(run) + '<h4 class="sub">Bounties</h4>' + bountyList(run) }; Sound.tap(); renderOverlay(); },
     plan(d) { UI.sheet = { type: 'depart', p: d.p, insure: run.insurePref !== false }; renderOverlay(); },
     'toggle-ins'() { UI.sheet.insure = !UI.sheet.insure; renderOverlay(); },
@@ -1155,6 +1335,11 @@
       renderOverlay();
     },
   };
+  function coAct(r, msg) {
+    if (!r || !r.ok) { toast((r && r.msg) || 'Not possible', 'bad'); Sound.error(); return; }
+    if (msg) toast(msg, 'good'); Sound.good();
+    afterAction(); render();
+  }
   function setQty(q) {
     const s = run, sh = UI.sheet; if (!sh) return;
     const max = sh.mode === 'buy' ? MM.maxBuy(s, sh.g) : (s.cargo[sh.g] ? s.cargo[sh.g].q : 0);

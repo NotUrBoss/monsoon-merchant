@@ -39,10 +39,17 @@ def choose(page, field, value):
 def number(page, field, value):
     page.locator(f'#net-{field}').fill(str(value))
 
+SEED_COMPANY = '''() => {localStorage.setItem('mm.company.v3', MMNetwork.serialize(MMNetwork.create('e2e-' + Date.now(), true)));}'''
+
 def start(page, url):
+    # New company campaigns are retired; an in-progress campaign is finished from the title's Archive entry.
     page.goto(url, wait_until='networkidle')
+    assert page.locator('[data-a="network"]').count() == 0, 'no archive entry without a saved company'
+    page.evaluate(SEED_COMPANY)
+    page.reload(wait_until='networkidle')
     page.locator('[data-a="network"]').click()
-    click(page, 'new')
+    assert page.locator('[data-n="new"]').count() == 0, 'archive cannot start new companies'
+    click(page, 'continue')
     assert state(page)['captain']['ship'] == 'coaster'
 
 def resume(page, url):
@@ -207,6 +214,7 @@ def migration_journey(page, context, url, out):
     page.goto(url, wait_until='networkidle')
     old = page.evaluate('''() => {const s=MMNetwork.create('migration-fixture');delete s.captain;delete s.customer;s.version=1;
       const raw=JSON.stringify(s);localStorage.setItem('mm.network.v1',raw);return raw;}''')
+    page.reload(wait_until='networkidle')
     page.locator('[data-a="network"]').click()
     click(page, 'continue')
     migrated = state(page)
@@ -215,21 +223,22 @@ def migration_journey(page, context, url, out):
     assert page.evaluate("localStorage.getItem('mm.network.v1')") == old
     click(page, 'exit')
     page.locator('[data-a="network"]').click()
-    click(page, 'new')
-    click(page, 'cancel-new')
+    assert page.locator('[data-n="new"]').count() == 0
     assert state(page) == migrated
     click(page, 'continue')
     click(page, 'exit')
-    # Original classic game still opens without modifying the unified save.
+    # A new season opens without modifying the archived company save.
     page.locator('[data-a="new-season"]').click()
     assert state(page) == migrated
     page.screenshot(path=str(out/'classic-preserved.png'))
 
 def storage_failure(page, context, url, out):
-    page.add_init_script('''Storage.prototype.setItem=function(){throw new DOMException('Test quota failure','QuotaExceededError');};''')
     page.goto(url, wait_until='networkidle')
+    page.evaluate(SEED_COMPANY)
+    page.add_init_script('''Storage.prototype.setItem=function(){throw new DOMException('Test quota failure','QuotaExceededError');};''')
+    page.reload(wait_until='networkidle')
     page.locator('[data-a="network"]').click()
-    click(page, 'new')
+    click(page, 'continue')
     assert 'could not be saved' in page.locator('.net-scroll').inner_text()
     backup = json.loads(page.locator('#net-backup-code').input_value())
     assert backup['captain']['ship'] == 'coaster' and backup['cash'] == 500000
@@ -321,6 +330,7 @@ def v2_migration_journey(page, context, url, out):
       MMNetwork.buildWarehouse(s,'singapore');MMNetwork.trade(s,'klang','palm',20,'buy');
       MMNetwork.transferCargo(s,'palm',20,'load');MMNetwork.sail(s,'singapore');
       delete s.customer;s.version=2;const raw=JSON.stringify(s);localStorage.setItem('mm.company.v2',raw);return raw;}''')
+    page.reload(wait_until='networkidle')
     page.locator('[data-a="network"]').click();click(page,'continue')
     migrated=state(page);original=json.loads(old)
     assert migrated['version']==3
@@ -328,7 +338,7 @@ def v2_migration_journey(page, context, url, out):
         assert migrated[key]==original[key]
     assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
     page.wait_for_function('navigator.serviceWorker.controller !== null')
-    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.0.0');return (await c.keys()).map(r=>r.url);}''')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.1.0');return (await c.keys()).map(r=>r.url);}''')
     assert any(x.endswith('/company-actions.js') for x in cached)
     assert any(x.endswith('/company-play.js') for x in cached)
     assert all(any(x.endswith('/' + n) for x in cached) for n in ('art.js', 'pixel.js', 'sfx.js'))
@@ -369,6 +379,58 @@ def decision_and_effects_journey(page, context, url, out):
     assert page.locator('[data-n="advance-next"]').is_disabled()
     page.screenshot(path=str(out/'deadline-stop.png'))
 
+def season_state(page):
+    return page.evaluate("JSON.parse(localStorage.getItem('mm.run.normal.v1'))")
+
+def act(page, action, **data):
+    sel = f'[data-a="{action}"]' + ''.join(f'[data-{k}="{v}"]' for k, v in data.items())
+    page.locator(sel).first.click()
+
+def merged_supply_chain_journey(page, context, url, out):
+    # One game: a captain season grows a warehouse, standing orders, a factory and a freight route.
+    page.set_viewport_size({'width':390,'height':844})
+    page.goto(url, wait_until='networkidle')
+    assert page.locator('[data-a="network"]').count() == 0
+    assert page.locator('[data-a="new-season"]').count() == 1
+    page.evaluate('''() => {const s=MM.newRun({seed:'e2e-merged'},MM.newMeta());s.cash+=2500000;s.st.peak=2500000;
+      localStorage.setItem('mm.run.normal.v1',MM.serialize(s));}''')
+    page.reload(wait_until='networkidle')
+    act(page, 'continue', slot='normal')
+    act(page, 'tab', id='company')
+    assert page.locator('.stagecard .stg.on').count() == 4
+    act(page, 'wh-build')
+    assert 'klang' in season_state(page)['co']['wh']
+    for good in ('rice', 'palm'):
+        act(page, 'order-new', p='klang')
+        act(page, 'ord-g', v=good); act(page, 'ord-q', v=50); act(page, 'ord-m', v='any'); act(page, 'ord-save')
+    assert [o['g'] for o in season_state(page)['co']['wh']['klang']['orders']] == ['rice', 'palm']
+    act(page, 'fac-sheet'); act(page, 'fac-build', id='food')
+    assert season_state(page)['co']['fac']['klang']['recipe'] == 'food'
+    act(page, 'route-new'); act(page, 'rt-g', v='food'); act(page, 'rt-to', v='singapore'); act(page, 'rt-q', v=25); act(page, 'rt-save')
+    assert season_state(page)['co']['routes'][0]['to'] == 'singapore'
+    for width, height in ((320,740),(375,812),(768,1024)):
+        page.set_viewport_size({'width':width,'height':height})
+        sizes = page.evaluate('''() => [document.documentElement,document.body,document.querySelector('#app'),document.querySelector('.scroll')]
+          .filter(Boolean).map(e=>({tag:e.id||e.className||e.tagName,width:e.clientWidth,scroll:e.scrollWidth}))''')
+        assert all(x['scroll'] <= x['width'] + 1 for x in sizes), sizes
+        page.evaluate("document.getElementById('toasts').innerHTML=''")
+        page.screenshot(path=str(out/f'company-{width}.png'))
+    page.set_viewport_size({'width':390,'height':844})
+    act(page, 'tab', id='market')
+    assert page.locator('.whstrip').count() == 1
+    for _ in range(3):
+        act(page, 'wait')
+        if page.locator('[data-a="result-ok"]').count(): act(page, 'result-ok')
+    s = season_state(page)
+    assert s['co']['made'] > 0, s['co']['fac']
+    act(page, 'tab', id='company')
+    assert 'Made' in page.locator('.facline').inner_text()
+    page.evaluate("document.getElementById('toasts').innerHTML=''")
+    page.screenshot(path=str(out/'company-running.png'))
+    page.reload(wait_until='networkidle')
+    act(page, 'continue', slot='normal')
+    assert season_state(page)['co'] == s['co']
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',default='/tmp/mm-browser-evidence')
@@ -384,7 +446,7 @@ def main():
             for engine in args.browsers:
                 browser=getattr(playwright,engine).launch(headless=True, **({'executable_path':os.environ['MM_CHROMIUM_PATH']} if engine=='chromium' and os.environ.get('MM_CHROMIUM_PATH') else {}))
                 try:
-                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey)]:
+                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey)]:
                         directory=output/engine/name;directory.mkdir(parents=True,exist_ok=True)
                         context=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
                         context.tracing.start(screenshots=True,snapshots=True,sources=True)

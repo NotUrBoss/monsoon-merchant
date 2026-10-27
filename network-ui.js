@@ -65,6 +65,12 @@
       save(); render(!result.finished);
     }
     function lobby() {
+      if (options.archive) {
+        return '<div class="net-intro"><span class="net-kicker">Archive · retired mode</span><h1 tabindex="-1">Monsoon Company</h1><p class="net-lead">Finish your saved campaign.</p><p>The company campaign is now part of the main season: warehouses, factories and freight unlock as your captain grows. You can still finish a company campaign that was already in progress, but new company campaigns cannot be started here.</p>' +
+          (unreadable ? '<p class="net-warning">The saved company could not be read. It has been kept on this device. You can restore a company backup below.</p>' : '') +
+          (saved ? btn('Continue company · Day ' + saved.day + '/60', 'continue', 'primary big') : '<p class="net-note">No company campaign is saved on this device.</p>') +
+          '<button class="net-text-button" data-n="backup">Restore a company backup</button></div>';
+      }
       return '<div class="net-intro"><span class="net-kicker">The unified campaign</span><h1 tabindex="-1">Monsoon Company</h1><p class="net-lead">Captain. Manufacture. Deliver.</p><p>Captain your own ship while your factories and sea, air and rail freight keep working. Every workspace uses one company balance, one inventory network and one clock.</p>' +
         '<ol class="net-steps"><li><b>Trade locally</b><span>Begin with ' + money(500000) + ' cash, a Klang warehouse and your starter coaster. Prices include a buy/sell spread.</span></li><li><b>Build your network</b><span>Source inputs, manufacture finished goods, then deliver with your own ship or up to 3 chartered shipments at once.</span></li><li><b>Make every day count</b><span>Advance the shared day, fulfil delivery orders and keep a cash reserve for upkeep and any debt interest.</span></li></ol>' +
         '<p class="net-note"><b>Time moves only when you advance a day.</b> Trading, building and dispatching do not move the clock. One 60-day company campaign. Previous Network Company saves are upgraded without erasing their originals. Classic seasons, Daily Voyage and Legacy remain available as archived challenges.</p>' +
@@ -75,7 +81,7 @@
     }
     function summary() {
       const result = state.result;
-      return '<section class="net-intro net-finale"><span class="net-kicker">Day 60 · season complete</span><h1 tabindex="-1">' + esc(result.rank) + '</h1><p class="net-lead">' + money(result.netWorth) + '</p><p>Company value after liabilities, including cargo at local sale prices and the resale value of facilities and your ship. ' + (result.profit >= 0 ? 'You gained ' : 'You lost ') + money(Math.abs(result.profit)) + ' against your opening company value.</p><dl class="net-stats">' + fact('Chartered shipments completed', result.shipments) + fact('Captain voyages', state.captain?.voyages || 0) + fact('Orders fulfilled', Object.values(state.captain?.orders || {}).filter(x=>x==='fulfilled').length) + fact('Manufactured', result.produced + ' t') + fact('Upkeep paid or accrued', money(state.stats.upkeep)) + fact('Outstanding debt', money(state.debt || 0)) + '</dl><p class="net-note">Review the operations log below or start another company from the title. Company objectives and valuation are independent of archived classic Legacy rewards.</p>' + btn('Company title', 'lobby', 'primary') + '</section>';
+      return '<section class="net-intro net-finale"><span class="net-kicker">Day 60 · season complete</span><h1 tabindex="-1">' + esc(result.rank) + '</h1><p class="net-lead">' + money(result.netWorth) + '</p><p>Company value after liabilities, including cargo at local sale prices and the resale value of facilities and your ship. ' + (result.profit >= 0 ? 'You gained ' : 'You lost ') + money(Math.abs(result.profit)) + ' against your opening company value.</p><dl class="net-stats">' + fact('Chartered shipments completed', result.shipments) + fact('Captain voyages', state.captain?.voyages || 0) + fact('Orders fulfilled', Object.values(state.captain?.orders || {}).filter(x=>x==='fulfilled').length) + fact('Manufactured', result.produced + ' t') + fact('Upkeep paid or accrued', money(state.stats.upkeep)) + fact('Outstanding debt', money(state.debt || 0)) + '</dl><p class="net-note">' + (options.archive ? 'Review the operations log below. Your next seasons continue in the main game, where the company grows inside your captain season.' : 'Review the operations log below or start another company from the title.') + ' Company objectives and valuation are independent of archived classic Legacy rewards.</p>' + btn('Company title', 'lobby', 'primary') + '</section>';
     }
     function warehouse() {
       const w = state.warehouses[ui.hub], usage = N.warehouseUsage(state, ui.hub);
@@ -222,6 +228,7 @@
         catch (error) { message('Restore could not be saved. Your existing company is unchanged.', true); render(true); return; }
         ui.route=null;ui.report=null;ui.foodChain=false;state = loaded.state; saved = state; unreadable = false; saveWarning = ''; ui.hub = state.home; ui.view = 'campaign'; ui.backup = false; if(!state.captain && state.status==='active')N.enableCaptain(state); save(); message('Company restored.'); render(); return;
       }
+      if (options.archive && (action === 'new' || action === 'start' || action === 'cancel-new')) { render(true); return; }
       if (action === 'new') { if (saved || unreadable) { ui.confirm = true; render(true); } else start(); return; }
       if (action === 'start') { start(); return; }
       if (action === 'cancel-new') { ui.confirm = false; render(true); return; }
