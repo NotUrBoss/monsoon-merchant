@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -70,6 +70,11 @@
     haiphong:  { name: 'Haiphong', short: 'Haiphong', cc: 'VN', lon: 106.72, lat: 20.84, bank: false, yard: true, unlock: null, blurb: 'Factories, coal pits and a building boom that eats steel.' },
     shenzhen:  { name: 'Shenzhen', short: 'Shenzhen', cc: 'CN', lon: 114.08, lat: 22.5, bank: true, yard: true, unlock: null, blurb: 'Workshop of the world. Sells gadgets, buys everything else.' },
     shanghai:  { name: 'Shanghai', short: 'Shanghai', cc: 'CN', lon: 121.9, lat: 30.9, bank: true, yard: true, unlock: 'port_shanghai', blurb: 'Steel mills and deep pockets. Pays a fortune for durians.' },
+    // Ocean lanes: far ports beyond the chart, opened by the company's Ocean lanes stage. lon/lat place them at the chart edge.
+    colombo:   { name: 'Colombo', short: 'Colombo', cc: 'LK', lon: 96.75, lat: 8.7, bank: false, yard: false, unlock: null, ocean: true, blurb: 'Gateway to the Indian Ocean. Rubber estates and thirsty for rice.' },
+    mumbai:    { name: 'Mumbai', short: 'Mumbai', cc: 'IN', lon: 96.75, lat: 11.4, bank: true, yard: false, unlock: null, ocean: true, blurb: 'A billion cooks. Buys palm oil by the tanker, sells rice cheap.' },
+    dubai:     { name: 'Dubai', short: 'Dubai', cc: 'AE', lon: 96.75, lat: 14.1, bank: true, yard: true, unlock: null, ocean: true, blurb: 'Imports everything and pays well for it. Coal is the only bargain.' },
+    tokyo:     { name: 'Tokyo', short: 'Tokyo', cc: 'JP', lon: 124.25, lat: 28.6, bank: true, yard: true, unlock: null, ocean: true, blurb: 'Machines and gadgets cheap, rice and coffee very dear.' },
   };
   const PORT_IDS = Object.keys(PORTS);
 
@@ -101,8 +106,13 @@
     haiphong:  { rice: 0.92, palm: 1.28, rubber: 1.12, steel: 1.08, coffee: 0.96, electronics: 0.92, durian: 1.08, coal: 0.86, food: 1.05, tyres: 1.12, coffeemix: 1.02, machinery: 1.08 },
     shenzhen:  { rice: 1.16, palm: 1.34, rubber: 1.36, steel: 0.86, coffee: 1.22, electronics: 0.78, durian: 1.40, coal: 1.22, food: 1.08, tyres: 0.96, coffeemix: 1.10, machinery: 0.94 },
     shanghai:  { rice: 1.18, palm: 1.38, rubber: 1.32, steel: 0.70, coffee: 1.30, electronics: 0.86, durian: 1.50, coal: 1.30, food: 1.10, tyres: 0.95, coffeemix: 1.12, machinery: 0.92 },
+    colombo:   { rice: 1.16, palm: 1.14, rubber: 0.80, steel: 1.18, coffee: 0.96, electronics: 1.20, durian: 1.22, coal: 1.18, food: 1.12, tyres: 1.12, coffeemix: 1.06, machinery: 1.16 },
+    mumbai:    { rice: 0.82, palm: 1.45, rubber: 1.08, steel: 0.94, coffee: 1.06, electronics: 1.26, durian: 1.32, coal: 1.36, food: 1.06, tyres: 1.06, coffeemix: 1.14, machinery: 1.18 },
+    dubai:     { rice: 1.32, palm: 1.22, rubber: 1.26, steel: 1.24, coffee: 1.26, electronics: 1.08, durian: 1.46, coal: 0.92, food: 1.36, tyres: 1.30, coffeemix: 1.30, machinery: 1.24 },
+    tokyo:     { rice: 1.46, palm: 1.26, rubber: 1.30, steel: 0.88, coffee: 1.38, electronics: 0.84, durian: 1.56, coal: 1.34, food: 1.24, tyres: 0.94, coffeemix: 1.30, machinery: 0.84 },
   };
-  const PORT_SIZE = { penang: 0.8, klang: 1.1, singapore: 1.4, jakarta: 1.0, bangkok: 1.0, hcmc: 1.0, haiphong: 0.9, shenzhen: 1.3, shanghai: 1.5 };
+  const PORT_SIZE = { penang: 0.8, klang: 1.1, singapore: 1.4, jakarta: 1.0, bangkok: 1.0, hcmc: 1.0, haiphong: 0.9, shenzhen: 1.3, shanghai: 1.5, colombo: 0.9, mumbai: 1.4, dubai: 1.3, tokyo: 1.5 };
+  const OCEAN_PORTS = PORT_IDS.filter(p => PORTS[p].ocean);
 
   const SHIPS = {
     coaster:   { name: 'Old Coaster',       cap: 150,  speed: 10,   hull: 0.58, price: 0,       tradeIn: 20000, daily: 900,   desc: 'Rust, character and a cranky diesel.' },
@@ -167,6 +177,10 @@
 
   // Season lengths a player can choose for a normal season. Daily Voyage stays 60 days.
   const SEASON_DAYS = [90, 120];
+  // Endless mode runs in chapters of one monsoon each.
+  const CHAPTER_DAYS = 60;
+  // Every season length a save may hold: daily (60, sprint 45), normal and level 5+ cuts.
+  const VALID_DAYS = [45, 52, 60, 78, 90, 104, 120];
   const RANKS = [
     { id: 'deckhand', name: 'Deckhand', min: -Infinity },
     { id: 'bosun', name: 'Bosun', min: 200000 },
@@ -175,6 +189,8 @@
     { id: 'towkay', name: 'Towkay', min: 4000000 },
     { id: 'tycoon', name: 'Tycoon', min: 10000000 },
     { id: 'legend', name: 'Legend of the Straits', min: 25000000 },
+    { id: 'taipan', name: 'Taipan', min: 100000000 },
+    { id: 'prince', name: 'Merchant Prince', min: 250000000 },
   ];
   const MERCHANT_RANK = 3;
 
@@ -191,7 +207,7 @@
   const RIVAL = { name: 'Towkay Lim', full: 'Lim Ah Seng', desc: 'Old money from Penang. Runs a fleet of junks and hates losing.' };
   const BOUNTY_LP = { deliver: 8, ports: 6, bigsale: 8, profit: 8, contracts: 8, nwby: 10, hull: 5, rivalby: 8, nodebt: 5 };
 
-  const REGION_NAMES = { strait: 'Malacca Strait', java: 'Java Sea', gulf: 'Gulf of Thailand', scs: 'South China Sea', tonkin: 'Gulf of Tonkin', ecs: 'Taiwan Strait' };
+  const REGION_NAMES = { strait: 'Malacca Strait', java: 'Java Sea', gulf: 'Gulf of Thailand', scs: 'South China Sea', tonkin: 'Gulf of Tonkin', ecs: 'Taiwan Strait', indian: 'Indian Ocean', pacific: 'East China Sea and Pacific' };
 
   /* ================= Sea lanes ================= */
   const NODES = {
@@ -203,6 +219,7 @@
     paracel: [112.7, 17.2], prd: [114.1, 21.8],
     tonkin_n: [109.2, 20.4], qz: [110.3, 20.2], lz_e: [111.4, 20.8],
     tw: [119.5, 24.2], zj: [122.6, 28.3],
+    andaman: [97.7, 6.6], ryukyu: [123.4, 25.4],
   };
   const EDGES = [
     ['penang', 'm_n', 'strait'], ['m_n', 'klang', 'strait'], ['klang', 'm_s', 'strait'], ['m_s', 'sg_w', 'strait'], ['sg_w', 'singapore', 'strait'],
@@ -216,6 +233,9 @@
     ['vn_c', 'paracel', 'scs'], ['paracel', 'prd', 'scs'], ['prd', 'shenzhen', 'scs'],
     ['haiphong', 'tonkin_n', 'tonkin'], ['tonkin_n', 'qz', 'tonkin'], ['qz', 'lz_e', 'scs'], ['lz_e', 'prd', 'scs'],
     ['prd', 'tw', 'ecs'], ['tw', 'zj', 'ecs'], ['zj', 'shanghai', 'ecs'],
+    // Ocean lanes, with real sea distances in nautical miles.
+    ['penang', 'andaman', 'strait'], ['m_n', 'andaman', 'strait'], ['andaman', 'colombo', 'indian', 1100], ['colombo', 'mumbai', 'indian', 900], ['mumbai', 'dubai', 'indian', 1050],
+    ['tw', 'ryukyu', 'pacific'], ['ryukyu', 'tokyo', 'pacific', 1000], ['zj', 'tokyo', 'pacific', 950],
   ];
   function ll(id) { const p = PORTS[id]; return p ? [p.lon, p.lat] : NODES[id]; }
   function nmBetween(a, b) {
@@ -225,8 +245,8 @@
     return Math.hypot(dx, dy) * 1.05;
   }
   const GRAPH = {};
-  EDGES.forEach(([a, b, region]) => {
-    const len = nmBetween(a, b);
+  EDGES.forEach(([a, b, region, nm]) => {
+    const len = nm || nmBetween(a, b);
     (GRAPH[a] = GRAPH[a] || []).push({ to: b, len, region });
     (GRAPH[b] = GRAPH[b] || []).push({ to: a, len, region });
   });
@@ -310,9 +330,10 @@
       v: 1, lp: 0, lpTotal: 0, unlocks: {}, levelMax: 0, ach: {},
       stats: { seasons: 0, best: 0, bestRank: null, profit: 0, voyages: 0, storms: 0, pirates: 0, contracts: 0, daysAtSea: 0, trades: 0, sunk: 0 },
       history: [],
-      daily: { last: null, streak: 0, bestStreak: 0, best: {}, plays: {} },
+      daily: { last: null, streak: 0, bestStreak: 0, total: 0, best: {}, plays: {} },
       settings: { sound: true, music: true, haptics: true, tips: true, motion: true },
       tips: {},
+      endless: { runs: 0, best: 0, bestDay: 0, chapters: 0, hall: [] },
     };
   }
 
@@ -320,16 +341,16 @@
   function newRun(opts, meta) {
     opts = opts || {};
     meta = meta || newMeta();
-    const mode = opts.mode === 'daily' ? 'daily' : 'normal';
-    const daily = mode === 'daily';
+    const mode = opts.mode === 'daily' ? 'daily' : opts.mode === 'endless' ? 'endless' : 'normal';
+    const daily = mode === 'daily', endless = mode === 'endless';
     const seed = opts.seed || (daily ? 'daily-' + opts.dateKey : 'run-' + Date.now() + '-' + Math.floor(Math.random() * 1e9));
     const unl = daily ? {} : (meta.unlocks || {});
     const captain = daily ? 'rahim' : (CAPTAINS[opts.captain] && (!CAPTAINS[opts.captain].unlock || unl[CAPTAINS[opts.captain].unlock]) ? opts.captain : 'rahim');
     const level = daily ? 0 : clamp(opts.level | 0, 0, Math.min(10, meta.levelMax || 0));
-    const ports = PORT_IDS.filter(p => !PORTS[p].unlock || unl[PORTS[p].unlock]);
+    const ports = PORT_IDS.filter(p => !PORTS[p].ocean && (!PORTS[p].unlock || unl[PORTS[p].unlock]));
     const goods = GOOD_IDS.filter(g => !GOODS[g].unlock || unl[GOODS[g].unlock]);
     const W = stream(seed + ':world');
-    const length = daily ? 60 : (SEASON_DAYS.indexOf(+opts.days) >= 0 ? +opts.days : SEASON_DAYS[0]);
+    const length = daily ? 60 : endless ? CHAPTER_DAYS : (SEASON_DAYS.indexOf(+opts.days) >= 0 ? +opts.days : SEASON_DAYS[0]);
     const s = {
       v: 1, version: VERSION, mode, dateKey: opts.dateKey || null, seed,
       rngW: W, rngL: stream(seed + ':luck'),
@@ -365,7 +386,8 @@
       if (unl.perk_cash3) s.cash += 100000;
     }
     if (level >= 9) s.cash = Math.max(30000, s.cash - 20000);
-    if (level >= 5) s.maxDays = Math.round(length * 52 / 60);
+    if (level >= 5 && !endless) s.maxDays = Math.round(length * 52 / 60);
+    if (endless) s.endless = newEndless(s);
     if (captain === 'wong') s.ship.up.cold = true;
     if (daily) {
       s.twist = rPick(W, TWIST_IDS);
@@ -401,6 +423,7 @@
     }
     genOffers(s);
     s.st.peak = netWorth(s);
+    if (s.endless) s.endless.nw0 = s.st.peak;
     s.hist.push([1, Math.round(netWorth(s))]);
     return s;
   }
@@ -488,13 +511,15 @@
     if (nw > s.st.peak) s.st.peak = nw;
     if (!s.st.m1Day && nw >= 1e6) s.st.m1Day = s.day;
     if (s.bounties) checkBounties(s, false);
+    if (s.co) openOcean(s);
   }
   function log(s, text, kind) { s.log.unshift({ day: s.day, text, kind: kind || 'info' }); if (s.log.length > 60) s.log.length = 60; }
   function addNews(s, n) { n.day = s.day; n.id = ++s.seq; s.news.unshift(n); if (s.news.length > 50) s.news.length = 50; }
   const fail = (msg) => ({ ok: false, msg });
+  const own = (o, k) => o != null && typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
 
   /* ================= Trading ================= */
-  function canAct(s) { return s.phase === 'port' && !s.pending; }
+  function canAct(s) { return s.phase === 'port' && !s.pending && !(s.endless && s.endless.bankrupt); }
   function maxBuy(s, g) {
     if (s.cash <= 0) return 0;
     let lo = 0, hi = freeSpace(s);
@@ -514,6 +539,7 @@
     if (qt.total > s.cash) return fail('Not enough cash');
     s.cash -= qt.total;
     addCargo(s, g, q, qt.total / q);
+    if (s.co) { const h = s.co.here || (s.co.here = {}); h[g] = (h[g] || 0) + q; }
     s.mk[s.port][g].I += ELASTIC * q / depthT(s.port, g);
     s.st.trades++; s.st.spent += qt.total; s.st.maxMove = Math.max(s.st.maxMove, qt.move);
     snapshot(s, s.port);
@@ -603,20 +629,27 @@
   /* ================= Rival ================= */
   // Longer seasons compound: the rival grows faster than linearly with the season length.
   function rivalScale(d) { return d <= 60 ? d / 60 : 1 + 2.5 * (d - 60) / 60; }
+  // Endless: Lim's target for the end of chapter ch grows faster than linearly, and with the creeping level.
+  function endlessRivalTarget(s, ch, luck) { return Math.round(2200000 * luck * Math.pow(ch, 1.4) * (1 + 0.12 * s.level)); }
   function initRival(s) {
     const W = s.rngW;
-    const target = 2000000 * (1 + 0.15 * s.level) * (0.8 + rnd(W) * 0.45) * (s.twist === 'windfall' ? 1.3 : 1) * rivalScale(s.maxDays);
+    const luck = 0.8 + rnd(W) * 0.45;
+    const target = s.mode === 'endless' ? endlessRivalTarget(s, 1, luck) : 2000000 * (1 + 0.15 * s.level) * luck * (s.twist === 'windfall' ? 1.3 : 1) * rivalScale(s.maxDays);
     s.rival = { nw: 50000, target: Math.round(target), next: rInt(W, 1, 3), moves: 0, walk: 0, hist: [] };
+    if (s.mode === 'endless') { s.rival.base = 50000; s.rival.luck = luck; }
   }
-  function rivalCurve(s, day) { const x = clamp(day / s.maxDays, 0, 1); return 50000 + (s.rival.target - 50000) * Math.pow(x, 1.7); }
+  function rivalCurve(s, day) {
+    if (s.mode === 'endless' && s.endless) { const E = s.endless, x = clamp((day - E.start) / CHAPTER_DAYS, 0, 1); return s.rival.base + (s.rival.target - s.rival.base) * Math.pow(x, 1.2); }
+    const x = clamp(day / s.maxDays, 0, 1); return 50000 + (s.rival.target - 50000) * Math.pow(x, 1.7);
+  }
   function rivalTick(s) {
     const R = s.rival, W = s.rngW;
     R.walk = clamp(R.walk * 0.9 + rGauss(W) * 0.035, -0.18, 0.18);
     R.nw = Math.round(rivalCurve(s, Math.max(0, s.day)) * Math.exp(R.walk));
-    if (s.day >= 1) R.hist.push([s.day, R.nw]);
+    if (s.day >= 1) { R.hist.push([s.day, R.nw]); R.hist = thinHist(R.hist); }
     if (s.day >= R.next) { rivalMove(s); R.next = s.day + rInt(W, 2, 4); }
   }
-  function rivalFinal(s) { return s.day >= s.maxDays ? s.rival.nw : Math.round(rivalCurve(s, s.maxDays) * Math.exp(s.rival.walk)); }
+  function rivalFinal(s) { return s.mode === 'endless' || s.day >= s.maxDays ? s.rival.nw : Math.round(rivalCurve(s, s.maxDays) * Math.exp(s.rival.walk)); }
   function rivalMove(s) {
     const W = s.rngW;
     const r1 = rnd(W), m1 = rnd(W), m2 = rnd(W), d1 = rInt(W, 3, 5), d2 = rInt(W, 4, 7), lead = rInt(W, 2, 4);
@@ -644,7 +677,8 @@
   function levelGoal(s) { return niceGoal(RANKS[MERCHANT_RANK].min * Math.pow(s.maxDays / 60, 1.5)); }
   function makeBounty(s, type) {
     const W = s.rngW;
-    const half = Math.round(s.maxDays / 2);
+    const E = s.mode === 'endless' ? s.endless : null;
+    const half = E ? E.start + Math.round(CHAPTER_DAYS / 2) : Math.round(s.maxDays / 2);
     const b = { id: type, type, lp: BOUNTY_LP[type], done: false, failed: false, p: {} };
     if (type === 'deliver') {
       const goods = s.goods.filter(g => !GOODS[g].perish && !GOODS[g].product);
@@ -652,21 +686,24 @@
       const dests = s.ports.filter(p => PF[p][g] >= 1.12);
       const p = dests.length ? dests[Math.floor(rnd(W) * dests.length)] : s.ports[0];
       const q = rInt(W, 12, 25) * 10, d = Math.min(s.maxDays - 4, rInt(W, half - 8, half + 4));
-      b.p = { g, port: p, q, day: d };
+      b.p = { g, port: p, q, day: d, q0: E ? ((s.st.sold[p] || {})[g] || 0) : 0 };
       b.text = 'Sell ' + q + ' t of ' + GOODS[g].name.toLowerCase() + ' in ' + PORTS[p].name + ' by day ' + d;
-    } else if (type === 'ports') { b.p = { n: Math.min(6, s.ports.length) }; b.text = 'Drop anchor in ' + b.p.n + ' different ports'; }
-    else if (type === 'bigsale') { b.p = { x: niceGoal(400000 * s.maxDays / 60) }; b.text = 'Make a single sale worth ' + rm(b.p.x); }
-    else if (type === 'profit') { b.p = { x: niceGoal(150000 * s.maxDays / 60) }; b.text = 'Clear ' + rm(b.p.x) + ' profit on one sale'; }
-    else if (type === 'contracts') { b.p = { n: Math.max(3, 3 + Math.round((s.maxDays - 60) / 30)) }; b.text = 'Deliver ' + b.p.n + ' contracts'; }
-    else if (type === 'nwby') { const x = niceGoal(1e6 * Math.pow(half / 30, 2.2)); b.p = { x, day: half }; b.text = 'Be worth ' + rm(x) + ' by day ' + half; }
-    else if (type === 'hull') { b.p = { x: 80 }; b.text = 'Finish the season with the hull at 80% or better'; }
+    } else if (type === 'ports') {
+      if (E) { b.p = { n: 6, v0: s.st.voyages }; b.text = 'Make 6 voyages this chapter'; }
+      else { b.p = { n: Math.min(6, s.ports.length) }; b.text = 'Drop anchor in ' + b.p.n + ' different ports'; }
+    }
+    else if (type === 'bigsale') { b.p = { x: E ? niceGoal(Math.max(400000, netWorth(s) * 0.08, s.st.maxSale * 1.2)) : niceGoal(400000 * s.maxDays / 60) }; b.text = 'Make a single sale worth ' + rm(b.p.x); }
+    else if (type === 'profit') { b.p = { x: E ? niceGoal(Math.max(150000, netWorth(s) * 0.03, s.st.bestTrade * 1.2)) : niceGoal(150000 * s.maxDays / 60) }; b.text = 'Clear ' + rm(b.p.x) + ' profit on one sale'; }
+    else if (type === 'contracts') { b.p = { n: E ? 4 : Math.max(3, 3 + Math.round((s.maxDays - 60) / 30)), c0: E ? s.st.contracts : 0 }; b.text = 'Deliver ' + b.p.n + ' contracts' + (E ? ' this chapter' : ''); }
+    else if (type === 'nwby') { const x = E ? niceGoal(Math.max(1e6, netWorth(s) * 1.6)) : niceGoal(1e6 * Math.pow(half / 30, 2.2)); b.p = { x, day: half }; b.text = 'Be worth ' + rm(x) + ' by day ' + half; }
+    else if (type === 'hull') { b.p = { x: 80 }; b.text = 'Finish the ' + (E ? 'chapter' : 'season') + ' with the hull at 80% or better'; }
     else if (type === 'rivalby') { b.p = { day: half }; b.text = 'Be worth more than ' + RIVAL.name + ' on day ' + half; }
     else if (type === 'nodebt') { b.text = 'Never borrow from the Ah Long'; }
     return b;
   }
   function genBounties(s) {
     const W = s.rngW;
-    const pool = Object.keys(BOUNTY_LP);
+    const pool = Object.keys(BOUNTY_LP).filter(t => s.mode !== 'endless' || t !== 'nodebt');
     const picks = [];
     while (picks.length < 3) picks.push(pool.splice(Math.floor(rnd(W) * pool.length), 1)[0]);
     s.bounties = picks.map(t => makeBounty(s, t));
@@ -677,11 +714,11 @@
       if (b.done || b.failed) return;
       const P = b.p; let ok = false, bad = false;
       switch (b.type) {
-        case 'deliver': ok = ((s.st.sold[P.port] || {})[P.g] || 0) >= P.q; bad = !ok && s.day > P.day; break;
-        case 'ports': ok = Object.keys(s.st.visited).length >= P.n; break;
+        case 'deliver': ok = ((s.st.sold[P.port] || {})[P.g] || 0) - (P.q0 || 0) >= P.q; bad = !ok && s.day > P.day; break;
+        case 'ports': ok = P.v0 !== undefined ? s.st.voyages - P.v0 >= P.n : Object.keys(s.st.visited).length >= P.n; break;
         case 'bigsale': ok = s.st.maxSale >= P.x; break;
         case 'profit': ok = s.st.bestTrade >= P.x; break;
-        case 'contracts': ok = s.st.contracts >= P.n; break;
+        case 'contracts': ok = s.st.contracts - (P.c0 || 0) >= P.n; break;
         case 'nwby': ok = s.day <= P.day && netWorth(s) >= P.x; bad = !ok && s.day > P.day; break;
         case 'hull': ok = atEnd && !s.sunk && s.ship.cond >= P.x; bad = atEnd && !ok; break;
         case 'rivalby': if (s.day >= P.day && b.check === undefined) { b.check = netWorth(s) > s.rival.nw; ok = b.check; bad = !ok; } break;
@@ -747,10 +784,21 @@
     else if (s.phase === 'port') snapshot(s, s.port);
     if (s.captain === 'kumar' && s.day % 7 === 0) { snapshotAll(s); log(s, 'Kumar’s contacts send a fresh market report.', 'info'); }
     companyTick(s);
+    s.cash = clamp(s.cash, -1e12, 1e13); s.bank = Math.min(s.bank, 1e13); s.along = Math.min(s.along, 1e13);
     s.hist.push([s.day, Math.round(netWorth(s))]);
+    s.hist = thinHist(s.hist);
     afterChange(s);
   }
-  function dayTick(s) { s.day++; worldTick(s); playerTick(s); }
+  function dayTick(s) {
+    s.day++; worldTick(s); playerTick(s);
+    if (s.mode === 'endless' && s.endless) endlessTick(s);
+  }
+  // Keep the last 120 days in full and one point a week before that, so long games stay small.
+  function thinHist(h) {
+    if (h.length <= 300) return h;
+    const cut = h[h.length - 1][0] - 120;
+    return h.filter((x, i) => x[0] > cut || i === 0 || x[0] % 7 === 0);
+  }
 
   /* ================= Voyages ================= */
   function shipSpeed(s) { let v = SHIPS[s.ship.cls].speed; if (s.captain === 'teoh') v *= 1.15; if (s.ship.cond < 50) v *= 0.9; return v; }
@@ -765,9 +813,9 @@
     return 1 - str * a;
   }
   function stormP(s, region, day) {
-    const base = { strait: 0.012, java: 0.02, gulf: 0.022, scs: 0.04, tonkin: 0.036, ecs: 0.04 }[region] || 0.02;
+    const base = { strait: 0.012, java: 0.02, gulf: 0.022, scs: 0.04, tonkin: 0.036, ecs: 0.04, indian: 0.022, pacific: 0.03 }[region] || 0.02;
     let m = 1;
-    if (phaseOn(s, day) === 'SW') m *= ({ scs: 1.5, tonkin: 1.5, ecs: 1.5, gulf: 1.1 })[region] || 1;
+    if (phaseOn(s, day) === 'SW') m *= ({ scs: 1.5, tonkin: 1.5, ecs: 1.5, gulf: 1.1, indian: 1.6, pacific: 1.5 })[region] || 1;
     else m *= ({ scs: 1.15, gulf: 1.2 })[region] || 1;
     if (Math.abs(day - s.monsoon.shiftDay) <= 3) m *= 1.6;
     if (s.captain === 'teoh') m *= 0.65;
@@ -777,7 +825,7 @@
     return base * m;
   }
   function pirateP(s, region) {
-    const base = { strait: 0.05, java: 0.04, gulf: 0.016, scs: 0.02, tonkin: 0.014, ecs: 0.014 }[region] || 0.02;
+    const base = { strait: 0.05, java: 0.04, gulf: 0.016, scs: 0.02, tonkin: 0.014, ecs: 0.014, indian: 0.02, pacific: 0.006 }[region] || 0.02;
     let m = 0.4 + Math.min(1, cargoCostValue(s) / 250000) * 0.8;
     if (s.level >= 6) m *= 1.4;
     if (s.ship.up.security) m *= 0.6;
@@ -787,7 +835,7 @@
   const riskLabel = p => (p < 0.08 ? 'Low' : p < 0.22 ? 'Medium' : 'High');
   function insuranceRate(s, days, r) {
     let rate = 0.004 + 0.0028 * days;
-    const prone = r.segs.some(sg => sg.region === 'scs' || sg.region === 'tonkin' || sg.region === 'ecs');
+    const prone = r.segs.some(sg => sg.region === 'scs' || sg.region === 'tonkin' || sg.region === 'ecs' || sg.region === 'pacific' || sg.region === 'indian');
     if (prone && phaseOn(s, s.day + days) === 'SW') rate += 0.003;
     if (Math.abs(s.day - s.monsoon.shiftDay) <= 4) rate += 0.003;
     if (s.perks.insurer) rate *= 0.7;
@@ -812,7 +860,7 @@
     r.segs.forEach(sg => { if (regions.indexOf(sg.region) < 0) regions.push(sg.region); });
     const cv = cargoCostValue(s);
     return {
-      to, route: r, days, calmDays: calm, windDelta: days - calm, arrive: s.day + days, tooLate: s.day + days > s.maxDays,
+      to, route: r, days, calmDays: calm, windDelta: days - calm, arrive: s.day + days, tooLate: s.mode !== 'endless' && s.day + days > s.maxDays,
       cost: dailyCost(s) * days, premium: Math.round(cv * insuranceRate(s, days, r)), cargoValue: cv,
       storm, pirate, stormLabel: riskLabel(storm), pirateLabel: riskLabel(pirate), regions: regions.map(x => REGION_NAMES[x]), dist: Math.round(r.dist),
     };
@@ -830,6 +878,7 @@
     s.insurePref = !!insure;
     s.voyage = { from: s.port, to, days: plan.days, idx: 0, insured: premium > 0, premium, startDay: s.day, log: [] };
     s.phase = 'sea'; s.offers = []; s.arrival = null; s.st.voyages++;
+    if (s.co) s.co.here = {};
     return { ok: true, plan };
   }
   function stepVoyage(s) {
@@ -837,6 +886,7 @@
     if (s.pending) return { type: 'event', event: s.pending };
     const v = s.voyage;
     if (v.idx >= v.days) return arrive(s);
+    if (s.mode !== 'endless' && s.day >= s.maxDays) { log(s, 'You crack on through the last night and make ' + PORTS[v.to].name + ' as the season closes.', 'info'); return arrive(s); }
     dayTick(s);
     v.idx++;
     s.st.daysAtSea++;
@@ -860,7 +910,7 @@
     return null;
   }
   function makeStorm(s, sg) {
-    const prone = sg.region === 'scs' || sg.region === 'tonkin' || sg.region === 'ecs';
+    const prone = sg.region === 'scs' || sg.region === 'tonkin' || sg.region === 'ecs' || sg.region === 'pacific';
     const typhoon = prone && (s.monsoon.phase === 'SW' || Math.abs(s.day - s.monsoon.shiftDay) <= 3) && rnd(s.rngL) < 0.5;
     const wait = typhoon ? 2 : 1;
     const has = cargoUsed(s) > 0;
@@ -1065,6 +1115,15 @@
   }
   function sink(s) {
     const txt = loseCargo(s, 1, 'the sea');
+    // In Endless, a captain with a company is not finished: the company sends a coaster to bring them home.
+    if (s.mode === 'endless' && s.co && Object.keys(s.co.wh).length) {
+      const home = Object.keys(s.co.wh)[0];
+      s.ship = { cls: 'coaster', cond: 70, up: {} }; s.port = home; s.phase = 'port'; s.voyage = null; s.pending = null;
+      s.st.visited[home] = true; s.st.rescued = (s.st.rescued || 0) + 1;
+      log(s, 'Your ship foundered. ' + txt + ' The company brought you home to ' + PORTS[home].name + ' in an old coaster.', 'bad');
+      afterChange(s);
+      return { type: 'rescued', text: 'The battered hull finally gives way and the crew take to the boats. ' + txt + ' Your company sends an old coaster to bring you home to ' + PORTS[home].name + '. The trading house lives on.' };
+    }
     s.sunk = true; s.phase = 'sunk'; s.pending = null;
     log(s, 'Your ship has foundered. ' + txt, 'bad');
     return { type: 'sunk', text: 'The battered hull finally gives way. The crew make it to the lifeboats. ' + txt };
@@ -1119,7 +1178,7 @@
         const unit = c.cost, q = Math.min(c.q, d.qty - d.got), pay = Math.round(q * d.unit), done = d.got + q >= d.qty;
         removeCargo(s, d.g, q);
         dealDeliver(s, d, q, unit, null);
-        rep.delivered.push({ good: d.g, qty: q, pay: pay + (done ? d.bonus : 0), profit: pay - unit * q, big: true, done });
+        rep.delivered.push({ good: d.g, qty: q, pay: pay + (done ? d.bonus + d.deposit : 0), profit: pay - unit * q, big: true, done });
       }
       rep.co = takeCoReport(s);
     }
@@ -1128,7 +1187,7 @@
     const L = s.rngL; const u = rnd(L), u2 = rnd(L);
     if (cargoUsed(s) > 0 && u < 0.1) s.pending = makeCustoms(s);
     else if (u2 < 0.04) { s.cash += fee; rep.lines.push('The harbourmaster is in a durian-feast mood. Port fees waived.'); }
-    if (s.day >= s.maxDays) s.lastDay = true;
+    if (s.mode !== 'endless' && s.day >= s.maxDays) s.lastDay = true;
     s.arrival = rep;
     afterChange(s);
     return { type: 'arrived', report: rep };
@@ -1148,7 +1207,7 @@
       const d = dests[Math.floor(r1 * dests.length)];
       const plan = planVoyage(s, d);
       const deadline = s.day + plan.days + 4 + Math.floor(r2 * 7);
-      if (deadline > s.maxDays) continue;
+      if (s.mode !== 'endless' && deadline > s.maxDays) continue;
       const norm = GOODS[g].base * PF[d][g];
       const pay = Math.round(norm * (1.08 + r3 * 0.22) * (s.captain === 'meiling' ? 1.12 : 1));
       const capVal = Math.min(shipCap(s) * GOODS[g].base, Math.max(60000, netWorthCost(s) * 1.2));
@@ -1267,43 +1326,88 @@
   }
 
 
-  /* ================= Company: warehouses, factories, standing orders, freight ================= */
+  /* ================= Company: warehouses, factories, estates, shops, managers, freight, ocean lanes ================= */
   const STAGES = [
     { id: 'trader', at: 0, name: 'Trader', desc: 'Buy, sail and sell.' },
     { id: 'warehouse', at: 150000, name: 'Warehouses', desc: 'Rent warehouses and set standing buy and sell orders.' },
     { id: 'factory', at: 500000, name: 'Factories', desc: 'Build factories that turn raw goods into products every day.' },
     { id: 'freight', at: 1000000, name: 'Freight', desc: 'Hire freight to run standing routes between ports.' },
+    { id: 'estate', at: 2000000, name: 'Estates', desc: 'Buy plantations and mines that fill your warehouses every day.' },
+    { id: 'shop', at: 3000000, name: 'Shops', desc: 'Open shops that sell your goods to steady customers, for cash or on credit.' },
+    { id: 'manager', at: 8000000, name: 'Managers', desc: 'Hire branch managers who run a port for you.' },
+    { id: 'ocean', at: 10000000, name: 'Ocean lanes', desc: 'Sail and ship to Colombo, Mumbai, Dubai and Tokyo.' },
   ];
+  const STAGE = { warehouse: 1, factory: 2, freight: 3, estate: 4, shop: 5, manager: 6, ocean: 7 };
   const CO = { whCost: 60000, whUpCost: 50000, whCap: 400, whMaxLvl: 3, whUpkeep: 300, facCost: 150000, facUpCost: 120000, facUpkeep: 600, facBatches: 20, facMaxLvl: 2,
-    routeBase: 3000, routePerTDay: 6, routeMax: 3, freightSpeed: 12, orderMax: 4, reserve: 20000, batchFee: 0.04 };
+    routeBase: 3000, routePerTDay: 6, routeMax: 3, freightSpeed: 12, orderMax: 4, reserve: 20000, batchFee: 0.04,
+    estCost: 300000, estUpCost: 250000, estUpkeep: 1500, estMaxLvl: 2, estYield: 36000, harvestCost: 0.3,
+    shopCost: 250000, shopUpCost: 200000, shopUpkeep: 1000, shopMaxLvl: 2, creditDays: 30, mgrFee: 100000 };
   const RECIPES = {
     food:      { name: 'Food processor', input: { rice: 2, palm: 1 }, out: 2, batches: 9 },
     tyres:     { name: 'Tyre plant', input: { rubber: 1, steel: 1 }, out: 1, batches: 8 },
     coffeemix: { name: 'Coffee roastery', input: { coffee: 2, rice: 1 }, out: 2, batches: 2 },
     machinery: { name: 'Machine works', input: { steel: 3, electronics: 1 }, out: 1, batches: 1 },
   };
+  // Estates grow a raw good where the port is a natural producer; yields are best in their monsoon.
+  const ESTATES = {
+    palm:   { name: 'Palm oil estate', season: 'NE' },
+    rubber: { name: 'Rubber estate', season: 'NE' },
+    rice:   { name: 'Rice paddies', season: 'SW' },
+    coffee: { name: 'Coffee estate', season: 'SW' },
+    coal:   { name: 'Coal mine', season: null },
+  };
+  const SHOP_DEMAND = { food: 30, tyres: 14, coffeemix: 8, machinery: 1.5 };
+  const SHOP_TIERS = { value: { name: 'Value', price: 1.0, demand: 1.3 }, standard: { name: 'Standard', price: 1.07, demand: 1.0 }, premium: { name: 'Premium', price: 1.15, demand: 0.7 } };
+  const SHOP_TERMS = { cash: { name: 'Cash only', demand: 1.0 }, credit: { name: '30-day credit', demand: 1.4 } };
+  const MGR_STYLES = {
+    cautious:   { name: 'Cautious', wage: 2000, buy: -0.05, sell: 0.05, desc: 'Buys inputs only when cheap, sells only when dear, never pays to fix trouble.' },
+    balanced:   { name: 'Balanced', wage: 2500, buy: 0.08, sell: -0.02, desc: 'Keeps the factory fed at fair prices and pays small bills to fix trouble.' },
+    aggressive: { name: 'Aggressive', wage: 3000, buy: 9, sell: -0.12, desc: 'Never lets the factory wait, sells surplus fast and always pays to fix trouble.' },
+  };
+  const ALERT_CHOICES = { strike: ['settle', 'wait'], breakdown: ['repair', 'wait'], boom: ['overtime', 'normal'], blight: ['spray', 'wait'], pricewar: ['match', 'hold'] };
   function newCo() { return coFill({ wh: {}, fac: {}, routes: [], reserve: CO.reserve, seq: 0, made: 0, trips: 0, autoBought: 0, autoSold: 0, upkeep: 0, built: 0 }); }
+  function coRng(s) { if (!s.rngC) s.rngC = stream(s.seed + ':company'); return s.rngC; }
   function coStage(s) { let k = 0; STAGES.forEach((st, i) => { if ((s.st.peak || 0) >= st.at) k = i; }); return Math.max(k, s.co ? (s.co.minStage || 0) : 0); }
   function nextStage(s) { const k = coStage(s); return STAGES[k + 1] || null; }
+  function coCan(s) { return !!s.co && s.phase !== 'ended' && s.phase !== 'sunk'; }
   function whUsed(w) { let t = 0; for (const g in w.stock) t += w.stock[g].q; return t; }
   function whCap(w) { return w.lvl * CO.whCap; }
   function whFree(w) { return Math.max(0, whCap(w) - whUsed(w)); }
-  function stockAdd(w, g, q, unit) { if (q <= 0) return; const c = w.stock[g] || (w.stock[g] = { q: 0, cost: 0 }); c.cost = (c.cost * c.q + unit * q) / (c.q + q); c.q += q; }
-  function stockTake(w, g, q) { const c = w.stock[g]; if (!c) return 0; q = Math.min(q, c.q); c.q -= q; if (c.q <= 0) delete w.stock[g]; return q; }
+  // Stock remembers how many tonnes are "yours to deliver": made, grown or shipped in, not bought on this port's market.
+  function stockAdd(w, g, q, unit, mine) {
+    if (q <= 0) return;
+    const c = w.stock[g] || (w.stock[g] = { q: 0, cost: 0, ok: 0 });
+    c.cost = (c.cost * c.q + unit * q) / (c.q + q); c.q += q;
+    if (mine) c.ok = Math.min(c.q, (c.ok || 0) + q);
+  }
+  function stockTake(w, g, q, mineOnly) {
+    const c = w.stock[g]; if (!c) return 0;
+    q = Math.min(q, mineOnly ? c.ok : c.q);
+    if (q <= 0) return 0;
+    const plain = c.q - c.ok;
+    c.ok -= mineOnly ? q : Math.max(0, q - plain);
+    c.q -= q;
+    if (c.q <= 1e-9) delete w.stock[g];
+    else c.ok = clamp(c.ok, 0, c.q);
+    return q;
+  }
+  function mineQty(w, g) { const c = w && w.stock[g]; return c ? Math.floor(c.ok) : 0; }
   function spendable(s) { return Math.max(0, s.cash - (s.co ? s.co.reserve : CO.reserve)); }
   function fmtN(n) { return Math.round(n).toLocaleString('en-US'); }
   function coLog(s, text, kind) { log(s, text, kind || 'co'); }
   function needStage(s, k) { return coStage(s) >= k ? null : fail(STAGES[k].name + ' unlock at ' + rm(STAGES[k].at) + ' net worth'); }
+  function routeMax(s) { return s.mode === 'endless' && s.endless ? Math.min(6, CO.routeMax + Math.floor((s.endless.ch - 1) / 2)) : CO.routeMax; }
   function freightDays(s, from, to) {
     const r = route(from, to); let eff = 0;
     r.segs.forEach(sg => { eff += sg.len * windFactor(s, sg, phaseOn(s, s.day)); });
     return Math.max(1, Math.round(eff / (CO.freightSpeed * 24)));
   }
   function routeQuote(s, from, to, q) { const days = freightDays(s, from, to); return { days, cost: Math.round(CO.routeBase + CO.routePerTDay * q * days) }; }
+  function hereWh(s, p) { return own(s.co.wh, p) ? s.co.wh[p] : null; }
   function buildWarehouse(s) {
     if (!canAct(s)) return fail('Not now');
-    const st = needStage(s, 1); if (st) return st;
-    if (s.co.wh[s.port]) return fail('You already have a warehouse here');
+    const st = needStage(s, STAGE.warehouse); if (st) return st;
+    if (own(s.co.wh, s.port)) return fail('You already have a warehouse here');
     if (s.cash < CO.whCost) return fail('Not enough cash');
     s.cash -= CO.whCost; s.co.built += CO.whCost;
     s.co.wh[s.port] = { lvl: 1, stock: {}, orders: [], invest: CO.whCost, pl: { bought: 0, sold: 0, profit: 0, upkeep: 0 } };
@@ -1313,7 +1417,7 @@
   }
   function upgradeWarehouse(s, p) {
     if (!canAct(s)) return fail('Not now');
-    const w = s.co.wh[p]; if (!w) return fail('No warehouse there');
+    const w = hereWh(s, p); if (!w) return fail('No warehouse there');
     if (w.lvl >= CO.whMaxLvl) return fail('Already the biggest warehouse');
     if (s.cash < CO.whUpCost) return fail('Not enough cash');
     s.cash -= CO.whUpCost; s.co.built += CO.whUpCost; w.invest += CO.whUpCost; w.lvl++;
@@ -1322,31 +1426,40 @@
   }
   function storeCargo(s, g, q) {
     if (!canAct(s)) return fail('Not now');
-    const w = s.co.wh[s.port]; if (!w) return fail('No warehouse here');
+    const w = hereWh(s, s.port); if (!w) return fail('No warehouse here');
     if (strikeAt(s, s.port)) return fail('The dockers are on strike');
-    if (GOODS[g].perish) return fail('Warehouses have no cold storage');
-    const c = s.cargo[g]; if (!c) return fail('Not aboard');
+    if (!own(GOODS, g) || GOODS[g].perish) return fail('Warehouses have no cold storage');
+    const c = own(s.cargo, g) ? s.cargo[g] : null; if (!c) return fail('Not aboard');
     q = Math.min(Math.floor(q), c.q, whFree(w));
     if (q <= 0) return fail(whFree(w) <= 0 ? 'The warehouse is full' : 'Nothing to store');
-    stockAdd(w, g, q, c.cost); removeCargo(s, g, q);
+    // Cargo bought on this port's market during this call is not "yours to deliver".
+    const here = s.co.here || (s.co.here = {});
+    const local = Math.min(q, here[g] || 0);
+    if (local) here[g] -= local;
+    stockAdd(w, g, q - local, c.cost, true); stockAdd(w, g, local, c.cost, false);
+    removeCargo(s, g, q);
     afterChange(s);
     return { ok: true, q };
   }
   function takeCargo(s, g, q) {
     if (!canAct(s)) return fail('Not now');
-    const w = s.co.wh[s.port]; if (!w) return fail('No warehouse here');
+    const w = hereWh(s, s.port); if (!w) return fail('No warehouse here');
     if (strikeAt(s, s.port)) return fail('The dockers are on strike');
-    const c = w.stock[g]; if (!c) return fail('Not in the warehouse');
-    q = Math.min(Math.floor(q), c.q, freeSpace(s));
+    const c = own(w.stock, g) ? w.stock[g] : null; if (!c) return fail('Not in the warehouse');
+    q = Math.min(Math.floor(q), Math.floor(c.q), freeSpace(s));
     if (q <= 0) return fail('Your hold is full');
-    const unit = c.cost; stockTake(w, g, q); addCargo(s, g, q, unit);
+    const unit = c.cost, plain = Math.min(q, Math.max(0, Math.floor(c.q - c.ok)));
+    stockTake(w, g, q);
+    if (plain) { const here = s.co.here || (s.co.here = {}); here[g] = (here[g] || 0) + plain; }
+    addCargo(s, g, q, unit);
     afterChange(s);
     return { ok: true, q };
   }
   const ORDER_MODES = { buy: ['cheap', 'any'], sell: ['dear', 'any'] };
   function setOrder(s, p, kind, g, qty, mode) {
-    const w = s.co.wh[p]; if (!w) return fail('No warehouse there');
-    if (!ORDER_MODES[kind] || ORDER_MODES[kind].indexOf(mode) < 0) return fail('Unknown order');
+    if (!coCan(s)) return fail('Not now');
+    const w = hereWh(s, p); if (!w) return fail('No warehouse there');
+    if (!own(ORDER_MODES, kind) || ORDER_MODES[kind].indexOf(mode) < 0) return fail('Unknown order');
     if (s.goods.indexOf(g) < 0 || GOODS[g].perish) return fail('Not this cargo');
     qty = Math.floor(qty); if (!(qty >= 1 && qty <= 1000)) return fail('Choose 1 to 1,000 t a day');
     const same = w.orders.find(o => o.kind === kind && o.g === g);
@@ -1356,13 +1469,13 @@
     w.orders.push(o);
     return { ok: true, id: o.id };
   }
-  function removeOrder(s, p, id) { const w = s.co.wh[p]; if (!w) return fail('No warehouse there'); const i = w.orders.findIndex(o => o.id === id); if (i < 0) return fail('No such order'); w.orders.splice(i, 1); return { ok: true }; }
+  function removeOrder(s, p, id) { if (!coCan(s)) return fail('Not now'); const w = hereWh(s, p); if (!w) return fail('No warehouse there'); const i = w.orders.findIndex(o => o.id === id); if (i < 0) return fail('No such order'); w.orders.splice(i, 1); return { ok: true }; }
   function buildFactory(s, recipe) {
     if (!canAct(s)) return fail('Not now');
-    const st = needStage(s, 2); if (st) return st;
-    if (!RECIPES[recipe]) return fail('Unknown factory');
-    if (!s.co.wh[s.port]) return fail('Open a warehouse here first');
-    if (s.co.fac[s.port]) return fail('This port already has your factory');
+    const st = needStage(s, STAGE.factory); if (st) return st;
+    if (!own(RECIPES, recipe)) return fail('Unknown factory');
+    if (!hereWh(s, s.port)) return fail('Open a warehouse here first');
+    if (own(s.co.fac, s.port)) return fail('This port already has your factory');
     if (s.cash < CO.facCost) return fail('Not enough cash');
     s.cash -= CO.facCost; s.co.built += CO.facCost;
     s.co.fac[s.port] = { recipe, lvl: 1, made: 0, invest: CO.facCost, note: '', added: 0, upkeep: 0, downUntil: 0, otUntil: 0 };
@@ -1372,72 +1485,236 @@
   }
   function upgradeFactory(s, p) {
     if (!canAct(s)) return fail('Not now');
-    const f = s.co.fac[p]; if (!f) return fail('No factory there');
+    const f = own(s.co.fac, p) ? s.co.fac[p] : null; if (!f) return fail('No factory there');
     if (f.lvl >= CO.facMaxLvl) return fail('Already upgraded');
     if (s.cash < CO.facUpCost) return fail('Not enough cash');
     s.cash -= CO.facUpCost; s.co.built += CO.facUpCost; f.invest += CO.facUpCost; f.lvl++;
     afterChange(s);
     return { ok: true };
   }
+  /* ---- Estates ---- */
+  function estateGoods(s, p) { return Object.keys(ESTATES).filter(g => s.goods.indexOf(g) >= 0 && own(PF, p) && PF[p][g] <= 0.95); }
+  function estateYield(s, e) {
+    const sea = ESTATES[e.g].season, ph = phaseOn(s, s.day);
+    const season = sea ? (sea === ph ? 1.15 : 0.9) : 1;
+    return Math.max(1, Math.round(CO.estYield * e.lvl / GOODS[e.g].base * season * (e.blightUntil >= s.day ? 0.5 : 1)));
+  }
+  function buildEstate(s, g) {
+    if (!canAct(s)) return fail('Not now');
+    const st = needStage(s, STAGE.estate); if (st) return st;
+    if (!hereWh(s, s.port)) return fail('Open a warehouse here first');
+    if (own(s.co.est, s.port)) return fail('You already have an estate here');
+    if (!own(ESTATES, g) || estateGoods(s, s.port).indexOf(g) < 0) return fail('That does not grow here');
+    if (s.cash < CO.estCost) return fail('Not enough cash');
+    s.cash -= CO.estCost; s.co.built += CO.estCost;
+    s.co.est[s.port] = { g, lvl: 1, made: 0, added: 0, upkeep: 0, invest: CO.estCost, note: '', blightUntil: 0 };
+    coLog(s, ESTATES[g].name + ' bought near ' + PORTS[s.port].name + '.', 'good');
+    afterChange(s);
+    return { ok: true };
+  }
+  function upgradeEstate(s, p) {
+    if (!canAct(s)) return fail('Not now');
+    const e = own(s.co.est, p) ? s.co.est[p] : null; if (!e) return fail('No estate there');
+    if (e.lvl >= CO.estMaxLvl) return fail('Already at full size');
+    if (s.cash < CO.estUpCost) return fail('Not enough cash');
+    s.cash -= CO.estUpCost; s.co.built += CO.estUpCost; e.invest += CO.estUpCost; e.lvl++;
+    afterChange(s);
+    return { ok: true };
+  }
+  /* ---- Shops ---- */
+  function openShop(s) {
+    if (!canAct(s)) return fail('Not now');
+    const st = needStage(s, STAGE.shop); if (st) return st;
+    if (!hereWh(s, s.port)) return fail('Open a warehouse here first');
+    if (own(s.co.shop, s.port)) return fail('You already have a shop here');
+    if (s.cash < CO.shopCost) return fail('Not enough cash');
+    s.cash -= CO.shopCost; s.co.built += CO.shopCost;
+    s.co.shop[s.port] = { lvl: 1, tier: 'standard', terms: 'cash', rep: 1, sold: 0, profit: 0, upkeep: 0, recv: [], bad: 0, collected: 0, invest: CO.shopCost, carry: [], matchUntil: 0, warUntil: 0, note: '' };
+    coLog(s, 'Shop opened in ' + PORTS[s.port].name + '.', 'good');
+    afterChange(s);
+    return { ok: true };
+  }
+  function upgradeShop(s, p) {
+    if (!canAct(s)) return fail('Not now');
+    const sh = own(s.co.shop, p) ? s.co.shop[p] : null; if (!sh) return fail('No shop there');
+    if (sh.lvl >= CO.shopMaxLvl) return fail('Already the biggest shop');
+    if (s.cash < CO.shopUpCost) return fail('Not enough cash');
+    s.cash -= CO.shopUpCost; s.co.built += CO.shopUpCost; sh.invest += CO.shopUpCost; sh.lvl++;
+    afterChange(s);
+    return { ok: true };
+  }
+  function setShop(s, p, tier, terms) {
+    if (!coCan(s)) return fail('Not now');
+    const sh = own(s.co.shop, p) ? s.co.shop[p] : null; if (!sh) return fail('No shop there');
+    if (tier != null) { if (!own(SHOP_TIERS, tier)) return fail('Unknown price'); sh.tier = tier; }
+    if (terms != null) { if (!own(SHOP_TERMS, terms)) return fail('Unknown terms'); sh.terms = terms; }
+    return { ok: true };
+  }
+  function shopRecv(sh) { return sh.recv.reduce((t, r) => t + r[1], 0); }
+  function shopDemand(s, p, sh, g) {
+    const tier = SHOP_TIERS[sh.matchUntil >= s.day ? 'value' : sh.tier];
+    return SHOP_DEMAND[g] * sh.lvl * sh.rep * tier.demand * SHOP_TERMS[sh.terms].demand * (PORT_SIZE[p] || 1) * (sh.warUntil >= s.day && sh.matchUntil < s.day ? 0.5 : 1);
+  }
+  /* ---- Managers ---- */
+  function hireManager(s, style) {
+    if (!canAct(s)) return fail('Not now');
+    const st = needStage(s, STAGE.manager); if (st) return st;
+    if (!hereWh(s, s.port)) return fail('Open a warehouse here first');
+    if (own(s.co.mgr, s.port)) return fail('This port already has a manager');
+    if (!own(MGR_STYLES, style)) return fail('Choose a style');
+    if (s.cash < CO.mgrFee) return fail('Not enough cash');
+    s.cash -= CO.mgrFee; s.st.costs += CO.mgrFee;
+    s.co.mgr[s.port] = { style, since: s.day, bought: 0, sold: 0, wages: 0, decided: 0 };
+    coLog(s, MGR_STYLES[style].name + ' manager hired in ' + PORTS[s.port].name + '.', 'good');
+    afterChange(s);
+    return { ok: true };
+  }
+  function setManager(s, p, style) {
+    if (!coCan(s)) return fail('Not now');
+    const m = own(s.co.mgr, p) ? s.co.mgr[p] : null; if (!m) return fail('No manager there');
+    if (!own(MGR_STYLES, style)) return fail('Choose a style');
+    m.style = style; return { ok: true };
+  }
+  function fireManager(s, p) {
+    if (!coCan(s)) return fail('Not now');
+    if (!own(s.co.mgr, p)) return fail('No manager there');
+    delete s.co.mgr[p]; coLog(s, 'Manager in ' + PORTS[p].name + ' let go.', 'co'); return { ok: true };
+  }
+  function managerTick(s, p) {
+    const co = s.co, m = co.mgr[p], w = co.wh[p], M = MGR_STYLES[m.style];
+    if (!w || strikeAt(s, p)) return;
+    const f = own(co.fac, p) ? co.fac[p] : null;
+    const inputs = f ? RECIPES[f.recipe].input : {};
+    // Keep about four days of factory inputs in stock.
+    Object.keys(inputs).forEach(g => {
+      if (s.goods.indexOf(g) < 0) return;
+      const target = 4 * f.lvl * RECIPES[f.recipe].batches * inputs[g];
+      const have = (w.stock[g] || {}).q || 0;
+      let q = Math.min(Math.ceil(target - have), whFree(w));
+      if (q <= 0 || vsAvg(s, p, g) > M.buy) return;
+      while (q > 0 && quoteBuyAt(s, p, g, q).total > spendable(s)) q = Math.floor(q * 0.7);
+      if (q <= 0) return;
+      const qt = coTrade(s, p, g, q, 'buy');
+      s.cash -= qt.total; stockAdd(w, g, q, qt.total / q, false); m.bought += qt.total; w.pl.bought += qt.total; co.rep.bought += qt.total; s.st.trades++;
+    });
+    // Sell what nothing else here is waiting for.
+    Object.keys(w.stock).forEach(g => {
+      if (inputs[g] || GOODS[g].perish) return;
+      if (co.routes.some(r => r.from === p && r.g === g && !r.paused)) return;
+      if (co.deals.some(d => d.port === p && d.g === g)) return;
+      if (own(co.shop, p) && SHOP_DEMAND[g]) return;
+      if (w.orders.some(o => o.g === g)) return;
+      if (vsAvg(s, p, g) < M.sell) return;
+      const c = w.stock[g], q = Math.min(Math.floor(c.q), Math.max(10, Math.floor(c.q * 0.4)));
+      if (q <= 0) return;
+      const basis = c.cost * q, qt = coTrade(s, p, g, q, 'sell');
+      stockTake(w, g, q); s.cash += qt.total; m.sold += qt.total; s.st.trades++;
+      addSold(s, p, g, q); plSale(co, w.pl, qt.total, basis);
+    });
+  }
+  function mgrDecide(s, a) {
+    const m = a.p && own(s.co.mgr, a.p) ? s.co.mgr[a.p] : null;
+    if (!m || !alertOpen(s, a)) return;
+    const paid = a.choices[0], free = a.choices[1];
+    let pick = free.id;
+    if (m.style === 'aggressive') pick = paid.id;
+    else if (m.style === 'balanced' && (!paid.cost || paid.cost <= Math.max(20000, netWorth(s) * 0.02))) pick = paid.id;
+    if (paid.cost && s.cash < paid.cost) pick = free.id;
+    const r = coChoose(s, a.id, pick);
+    if (r.ok) { a.byMgr = true; m.decided++; repNote(s, 'Your ' + PORTS[a.p].name + ' manager chose: ' + a.choices.find(c => c.id === pick).label + '.'); }
+  }
+  /* ---- Ocean lanes ---- */
+  function openOcean(s) {
+    if (s.mode === 'daily' || !s.co || coStage(s) < STAGE.ocean || s.ports.indexOf(OCEAN_PORTS[0]) >= 0) return;
+    OCEAN_PORTS.forEach(p => {
+      s.ports.push(p);
+      s.mk[p] = {};
+      s.goods.forEach(g => { s.mk[p][g] = { L: 0, I: 0 }; });
+      snapshot(s, p);
+    });
+    addNews(s, { kind: 'monsoon', text: 'Ocean lanes open: Colombo, Mumbai, Dubai and Tokyo are on your chart. Long voyages, wide price gaps.' });
+    log(s, 'Ocean lanes open. Your ships and freight can now reach Colombo, Mumbai, Dubai and Tokyo.', 'good');
+  }
+  /* ---- Routes ---- */
   function addRoute(s, from, to, g, qty, dest) {
-    const st = needStage(s, 3); if (st) return st;
-    if (!s.co.wh[from]) return fail('Routes start at one of your warehouses');
+    if (!coCan(s)) return fail('Not now');
+    const st = needStage(s, STAGE.freight); if (st) return st;
+    if (!hereWh(s, from)) return fail('Routes start at one of your warehouses');
     if (from === to || s.ports.indexOf(to) < 0) return fail('Pick another port');
     if (dest !== 'wh' && dest !== 'mkt') return fail('Unknown destination');
-    if (dest === 'wh' && !s.co.wh[to]) return fail('You have no warehouse there');
+    if (dest === 'wh' && !hereWh(s, to)) return fail('You have no warehouse there');
     if (s.goods.indexOf(g) < 0 || GOODS[g].perish) return fail('Not this cargo');
     qty = Math.floor(qty); if (!(qty >= 10 && qty <= 200)) return fail('Choose 10 to 200 t a trip');
-    if (s.co.routes.length >= CO.routeMax) return fail('Up to ' + CO.routeMax + ' routes');
-    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false, sold: 0, profit: 0, freight: 0 };
+    if (s.co.routes.length >= routeMax(s)) return fail('Up to ' + routeMax(s) + ' routes');
+    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false, sold: 0, profit: 0, freight: 0, wait: 0 };
     s.co.routes.push(r);
     return { ok: true, id: r.id };
   }
-  function removeRoute(s, id) { const i = s.co.routes.findIndex(r => r.id === id); if (i < 0) return fail('No such route'); const r = s.co.routes[i]; if (r.trip) return fail('Wait until the cargo arrives'); s.co.routes.splice(i, 1); return { ok: true }; }
-  function pauseRoute(s, id) { const r = s.co.routes.find(x => x.id === id); if (!r) return fail('No such route'); r.paused = !r.paused; return { ok: true, paused: r.paused }; }
-  function setReserve(s, amt) { amt = Math.floor(amt); if (!(amt >= 0 && amt <= 5e6)) return fail('Choose RM 0 to 5M'); s.co.reserve = amt; return { ok: true }; }
-  function coTrade(s, p, g, q, side, unitCost) {
+  function removeRoute(s, id) { if (!coCan(s)) return fail('Not now'); const i = s.co.routes.findIndex(r => r.id === id); if (i < 0) return fail('No such route'); const r = s.co.routes[i]; if (r.trip) return fail('Wait until the cargo arrives'); s.co.routes.splice(i, 1); return { ok: true }; }
+  function pauseRoute(s, id) { if (!coCan(s)) return fail('Not now'); const r = s.co.routes.find(x => x.id === id); if (!r) return fail('No such route'); r.paused = !r.paused; return { ok: true, paused: r.paused }; }
+  function setReserve(s, amt) { if (!coCan(s)) return fail('Not now'); amt = Math.floor(amt); if (!(amt >= 0 && amt <= 5e6)) return fail('Choose RM 0 to 5M'); s.co.reserve = amt; return { ok: true }; }
+  function coTrade(s, p, g, q, side) {
     const qt = side === 'buy' ? quoteBuyAt(s, p, g, q) : quoteSellAt(s, p, g, q);
     s.mk[p][g].I += (side === 'buy' ? 1 : -1) * ELASTIC * q / depthT(p, g);
     return qt;
   }
   function vsAvg(s, p, g) { return baseMid(s, p, g) / (GOODS[g].base * Math.exp(s.G[g])) - 1; }
+  /* ---- The daily company tick ---- */
   function companyTick(s) {
     const co = s.co; if (!co) return;
     coFill(co);
-    const rep = co.rep;
+    const rep = co.rep, R = coRng(s);
     // 0. big orders and company alerts
     dealsTick(s);
     alertsTick(s);
     const ports = Object.keys(co.wh);
     if (!ports.length && !co.routes.length) return;
-    // 1. upkeep
+    // 1. upkeep and wages
     let up = 0;
     ports.forEach(p => { const w = co.wh[p], c = w.lvl * CO.whUpkeep; up += c; w.pl.upkeep += c; });
     Object.keys(co.fac).forEach(p => { const f = co.fac[p], c = f.lvl * CO.facUpkeep; up += c; f.upkeep += c; });
+    Object.keys(co.est).forEach(p => { const e = co.est[p], c = e.lvl * CO.estUpkeep; up += c; e.upkeep += c; });
+    Object.keys(co.shop).forEach(p => { const sh = co.shop[p], c = sh.lvl * CO.shopUpkeep; up += c; sh.upkeep += c; });
+    Object.keys(co.mgr).forEach(p => { const m = co.mgr[p], c = MGR_STYLES[m.style].wage; up += c; m.wages += c; });
     s.cash -= up; s.st.costs += up; co.upkeep += up; rep.upkeep += up;
-    // 2. factories
+    // 2. estates harvest into their warehouse
+    Object.keys(co.est).forEach(p => {
+      const e = co.est[p], w = co.wh[p];
+      if (!w) return;
+      const hc = Math.round(GOODS[e.g].base * CO.harvestCost);
+      let n = Math.min(estateYield(s, e), Math.floor(whFree(w)), Math.floor(spendable(s) / Math.max(1, hc)));
+      if (n <= 0) { e.note = whFree(w) < 1 ? 'Warehouse full: crop left in the field' : 'Cash below your reserve'; return; }
+      s.cash -= hc * n; s.st.costs += hc * n;
+      stockAdd(w, e.g, n, hc + e.lvl * CO.estUpkeep / n, true);
+      e.made += n; co.harvested += n; rep.made += n; rep.fees += hc * n;
+      e.added += Math.round(n * (baseMid(s, p, e.g) * (1 - spreadOf(s) / 2) - hc));
+      e.note = 'Harvested ' + n + ' t today' + (e.blightUntil >= s.day ? ' (blight)' : '');
+    });
+    // 3. factories
     Object.keys(co.fac).forEach(p => {
-      const f = co.fac[p], w = co.wh[p], R = RECIPES[f.recipe];
+      const f = co.fac[p], w = co.wh[p], Rc = RECIPES[f.recipe];
       if (!w) return;
       if (f.downUntil >= s.day) { f.note = 'Broken down until day ' + (f.downUntil + 1); return; }
       const ot = f.otUntil >= s.day;
-      let n = f.lvl * R.batches * (ot ? 2 : 1);
-      Object.keys(R.input).forEach(g => { n = Math.min(n, Math.floor(((w.stock[g] || {}).q || 0) / R.input[g])); });
-      const grow = R.out - Object.keys(R.input).reduce((t, g) => t + R.input[g], 0);
+      let n = f.lvl * Rc.batches * (ot ? 2 : 1);
+      Object.keys(Rc.input).forEach(g => { n = Math.min(n, Math.floor(((w.stock[g] || {}).q || 0) / Rc.input[g])); });
+      const grow = Rc.out - Object.keys(Rc.input).reduce((t, g) => t + Rc.input[g], 0);
       if (grow > 0) n = Math.min(n, Math.floor(whFree(w) / grow));
-      const fee = Math.round(GOODS[f.recipe].base * R.out * CO.batchFee * (ot ? 1.5 : 1));
+      const fee = Math.round(GOODS[f.recipe].base * Rc.out * CO.batchFee * (ot ? 1.5 : 1));
       n = Math.min(n, Math.floor(spendable(s) / Math.max(1, fee)));
-      if (n <= 0) { f.note = Object.keys(R.input).some(g => ((w.stock[g] || {}).q || 0) < R.input[g]) ? 'Waiting for inputs' : 'Cash below your reserve'; return; }
+      if (n <= 0) { f.note = Object.keys(Rc.input).some(g => ((w.stock[g] || {}).q || 0) < Rc.input[g]) ? 'Waiting for inputs' : 'Cash below your reserve'; return; }
       let cost = fee * n;
-      Object.keys(R.input).forEach(g => { cost += w.stock[g].cost * R.input[g] * n; stockTake(w, g, R.input[g] * n); });
+      Object.keys(Rc.input).forEach(g => { cost += w.stock[g].cost * Rc.input[g] * n; stockTake(w, g, Rc.input[g] * n); });
       s.cash -= fee * n; s.st.costs += fee * n;
-      const out = R.out * n;
-      stockAdd(w, f.recipe, out, cost / out);
+      const out = Rc.out * n;
+      stockAdd(w, f.recipe, out, cost / out, true);
       f.added += Math.round(out * baseMid(s, p, f.recipe) * (1 - spreadOf(s) / 2) - cost);
       f.made += out; co.made += out; rep.made += out; rep.fees += fee * n;
       f.note = 'Made ' + out + ' t today' + (ot ? ' (overtime)' : '');
     });
-    // 3. standing buy and sell orders
+    // 4. branch managers
+    Object.keys(co.mgr).forEach(p => managerTick(s, p));
+    // 5. standing buy and sell orders
     ports.forEach(p => {
       const w = co.wh[p];
       if (strikeAt(s, p)) return;
@@ -1446,16 +1723,16 @@
         const v = vsAvg(s, p, o.g);
         if (o.kind === 'buy') {
           if (o.mode === 'cheap' && v > -0.1) return;
-          let q = Math.min(o.qty, whFree(w));
+          let q = Math.min(o.qty, Math.floor(whFree(w)));
           if (q <= 0) return;
           while (q > 0 && quoteBuyAt(s, p, o.g, q).total > spendable(s)) q = Math.floor(q * 0.7);
           if (q <= 0) return;
           const qt = coTrade(s, p, o.g, q, 'buy');
-          s.cash -= qt.total; stockAdd(w, o.g, q, qt.total / q); o.done += q; co.autoBought += qt.total; s.st.trades++;
+          s.cash -= qt.total; stockAdd(w, o.g, q, qt.total / q, false); o.done += q; co.autoBought += qt.total; s.st.trades++;
           w.pl.bought += qt.total; rep.bought += qt.total;
         } else {
           if (o.mode === 'dear' && v < 0.1) return;
-          const have = (w.stock[o.g] || {}).q || 0;
+          const have = Math.floor((w.stock[o.g] || {}).q || 0);
           const q = Math.min(o.qty, have);
           if (q <= 0) return;
           const basis = w.stock[o.g].cost * q;
@@ -1468,19 +1745,53 @@
         }
       });
     });
-    // 4. freight routes: arrivals, then departures
+    // 6. shops sell your own goods to their customers; credit sales are collected later
+    Object.keys(co.shop).forEach(p => {
+      const sh = co.shop[p], w = co.wh[p];
+      if (!w) return;
+      for (const r of sh.recv.slice()) {
+        if (r[0] > s.day) continue;
+        sh.recv.splice(sh.recv.indexOf(r), 1);
+        let amt = r[1];
+        if (rnd(R) < 0.06) { const lost = Math.round(amt * (0.3 + 0.7 * rnd(R))); amt -= lost; sh.bad += lost; sh.profit -= lost; repNote(s, 'A customer of your ' + PORTS[p].name + ' shop defaulted: ' + rm(lost) + ' lost.'); }
+        s.cash += amt; sh.collected += amt;
+      }
+      if (strikeAt(s, p)) { sh.note = 'Strike: nothing reaches the shop'; return; }
+      const tier = SHOP_TIERS[sh.matchUntil >= s.day ? 'value' : sh.tier];
+      let wanted = 0, served = 0, take = 0;
+      Object.keys(SHOP_DEMAND).forEach(g => {
+        if (s.goods.indexOf(g) < 0) return;
+        const mine = mineQty(w, g), dem = Math.round(shopDemand(s, p, sh, g));
+        if (mine > 0 && sh.carry.indexOf(g) < 0) sh.carry.push(g);
+        if (sh.carry.indexOf(g) < 0 || dem <= 0) return;
+        wanted += dem;
+        const q = Math.min(dem, mine);
+        if (q <= 0) return;
+        served += q;
+        const unit = baseMid(s, p, g) * (1 - spreadOf(s) / 2) * tier.price, basis = w.stock[g].cost * q, amt = Math.round(unit * q);
+        stockTake(w, g, q, true);
+        sh.sold += amt; sh.profit += amt - basis; rep.sold += amt; rep.profit += amt - basis; take += amt;
+        if (sh.terms === 'credit') {
+          const due = s.day + CO.creditDays, last = sh.recv[sh.recv.length - 1];
+          if (last && last[0] === due) last[1] += amt; else sh.recv.push([due, amt]);
+        } else s.cash += amt;
+      });
+      if (wanted > 0) sh.rep = clamp(sh.rep + (served >= wanted * 0.8 ? 0.015 : -0.03), 0.5, 1.5);
+      sh.note = wanted ? 'Sold ' + served + ' of ' + wanted + ' t wanted today' : 'Waiting for goods: stock your own products here';
+    });
+    // 7. freight routes: arrivals, then departures
     co.routes.forEach(r => {
       if (r.trip && s.day >= r.trip.arrive) {
         if (strikeAt(s, r.to)) { r.trip.arrive = s.day + 1; }
         else {
           const t = r.trip; r.trip = null; r.trips++; co.trips++;
           let q = t.q;
-          if (rnd(s.rngL) < 0.04) { const lost = Math.round(q * rRange(s.rngL, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; r.profit += pay - lost * t.unit; const msg = 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.'; coLog(s, msg, 'bad'); repNote(s, msg); }
+          if (rnd(R) < 0.04) { const lost = Math.round(q * rRange(R, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; r.profit += pay - lost * t.unit; const msg = 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.'; coLog(s, msg, 'bad'); repNote(s, msg); }
           // Big orders at the destination take the cargo first.
           co.deals.filter(d => d.port === r.to && d.g === r.g).forEach(d => { if (q > 0) q -= dealDeliver(s, d, Math.min(q, d.qty - d.got), t.unit, r); });
-          if (r.dest === 'wh' && co.wh[r.to] && q > 0) {
-            const w = co.wh[r.to], room = Math.min(q, whFree(w));
-            stockAdd(w, r.g, room, t.unit); q -= room;
+          if (r.dest === 'wh' && hereWh(s, r.to) && q > 0) {
+            const w = co.wh[r.to], room = Math.min(q, Math.floor(whFree(w)));
+            stockAdd(w, r.g, room, t.unit, true); q -= room;
           }
           if (q > 0) {
             const qt = coTrade(s, r.to, r.g, q, 'sell');
@@ -1493,40 +1804,44 @@
       }
       if (!r.trip && !r.paused && !strikeAt(s, r.from)) {
         const w = co.wh[r.from]; if (!w) return;
-        const have = (w.stock[r.g] || {}).q || 0;
+        const have = Math.floor((w.stock[r.g] || {}).q || 0);
         const q = Math.min(r.qty, have);
-        if (q <= 0 || (q < Math.min(10, r.qty) && q * w.stock[r.g].cost < 150000)) return;
+        if (q <= 0) { r.wait = 0; return; }
+        // Small loads wait up to three days for more stock, then go anyway.
+        if (q < Math.min(10, r.qty) && q * w.stock[r.g].cost < 150000 && r.wait < 3) { r.wait++; return; }
         const rq = routeQuote(s, r.from, r.to, q);
         if (spendable(s) < rq.cost) return;
         const unit = w.stock[r.g].cost;
-        stockTake(w, r.g, q); s.cash -= rq.cost; s.st.costs += rq.cost;
+        stockTake(w, r.g, q); s.cash -= rq.cost; s.st.costs += rq.cost; r.wait = 0;
         r.freight += rq.cost; rep.freight += rq.cost; rep.shipped += q;
         r.trip = { q, unit: unit + rq.cost / q, depart: s.day, arrive: s.day + rq.days };
       }
     });
-    // 5. contracts and big orders delivered straight from a warehouse at the destination
+    // 8. contracts and big orders delivered from a warehouse at the destination, from your own goods only
     for (const k of s.contracts.slice()) {
-      const w = co.wh[k.dest], c = w && w.stock[k.good];
-      if (c && c.q >= k.qty && s.day <= k.deadline && !strikeAt(s, k.dest)) {
-        const pay = k.qty * k.pay, basis = c.cost * k.qty;
-        stockTake(w, k.good, k.qty); addSold(s, k.dest, k.good, k.qty);
-        s.cash += pay; s.st.contracts++; s.st.contractPay += pay;
-        s.contracts.splice(s.contracts.indexOf(k), 1);
-        plSale(co, w.pl, pay, basis); rep.delivered += k.qty;
-        const msg = 'Warehouse ' + PORTS[k.dest].name + ' delivered the contract: ' + k.qty + ' t ' + GOODS[k.good].name.toLowerCase() + ' for ' + rm(pay) + '.';
-        coLog(s, msg, 'good'); repNote(s, msg);
-      }
+      const w = hereWh(s, k.dest);
+      if (!w || mineQty(w, k.good) < k.qty || s.day > k.deadline || strikeAt(s, k.dest)) continue;
+      const pay = k.qty * k.pay, basis = w.stock[k.good].cost * k.qty;
+      stockTake(w, k.good, k.qty, true); addSold(s, k.dest, k.good, k.qty);
+      s.cash += pay; s.st.contracts++; s.st.contractPay += pay;
+      s.contracts.splice(s.contracts.indexOf(k), 1);
+      plSale(co, w.pl, pay, basis); rep.delivered += k.qty;
+      const msg = 'Warehouse ' + PORTS[k.dest].name + ' delivered the contract: ' + k.qty + ' t ' + GOODS[k.good].name.toLowerCase() + ' for ' + rm(pay) + '.';
+      coLog(s, msg, 'good'); repNote(s, msg);
     }
     for (const d of co.deals.slice()) {
-      const w = co.wh[d.port], c = w && w.stock[d.g];
-      if (!c || strikeAt(s, d.port)) continue;
-      const q = Math.min(c.q, d.qty - d.got), unit = c.cost;
+      const w = hereWh(s, d.port);
+      if (!w || strikeAt(s, d.port)) continue;
+      const q = Math.min(mineQty(w, d.g), d.qty - d.got);
       if (q <= 0) continue;
-      stockTake(w, d.g, q);
+      const unit = w.stock[d.g].cost;
+      stockTake(w, d.g, q, true);
       dealDeliver(s, d, q, unit, w.pl);
     }
-    // 6. your warehouses report live prices
+    // 9. your warehouses report live prices
     ports.forEach(p => snapshot(s, p));
+    if (s.cash < 0 && up > 0 && !co.toldNeg) { co.toldNeg = 1; const msg = 'Cash is below zero: company running costs are piling up an overdraft. Sell stock or pause buying.'; coLog(s, msg, 'bad'); repNote(s, msg); }
+    if (s.cash >= 0) co.toldNeg = 0;
   }
   /* ---- Profit, reports ---- */
   function newRep(day) { return { from: day, bought: 0, sold: 0, profit: 0, made: 0, shipped: 0, delivered: 0, upkeep: 0, fees: 0, freight: 0, notes: [] }; }
@@ -1539,10 +1854,15 @@
     if (!Array.isArray(co.deals)) co.deals = [];
     if (co.dealOffer === undefined) co.dealOffer = null;
     if (!Array.isArray(co.alerts)) co.alerts = [];
-    ['nextDeal', 'dealsDone', 'nextAlert'].forEach(k => { if (co[k] == null) co[k] = 0; });
-    Object.values(co.wh).forEach(w => { if (!w.pl) w.pl = { bought: 0, sold: 0, profit: 0, upkeep: 0 }; });
+    ['est', 'shop', 'mgr', 'here'].forEach(k => { if (!saveRecord(co[k])) co[k] = {}; });
+    ['nextDeal', 'dealsDone', 'nextAlert', 'harvested', 'waited', 'dealShip'].forEach(k => { if (co[k] == null) co[k] = 0; });
+    Object.values(co.wh).forEach(w => {
+      if (!w.pl) w.pl = { bought: 0, sold: 0, profit: 0, upkeep: 0 };
+      Object.values(w.stock || {}).forEach(c => { if (c.ok == null) c.ok = c.q; });
+    });
     Object.values(co.fac).forEach(f => { ['added', 'upkeep', 'downUntil', 'otUntil'].forEach(k => { if (f[k] == null) f[k] = 0; }); });
-    co.routes.forEach(r => { ['sold', 'profit', 'freight'].forEach(k => { if (r[k] == null) r[k] = 0; }); });
+    co.routes.forEach(r => { ['sold', 'profit', 'freight', 'wait'].forEach(k => { if (r[k] == null) r[k] = 0; }); });
+    co.deals.concat(co.dealOffer ? [co.dealOffer] : []).forEach(d => { if (d.deposit == null) d.deposit = 0; });
     return co;
   }
   // The company report since you last docked: handed to the arrival card, then started again.
@@ -1556,7 +1876,7 @@
   /* ---- Big company orders ---- */
   const DEAL_QTY = { food: [250, 450], tyres: [150, 300], coffeemix: [60, 120], machinery: [10, 25] };
   function makeDeal(s) {
-    const L = s.rngL, co = s.co;
+    const L = coRng(s), co = s.co;
     const pool = Object.keys(RECIPES).filter(g => s.goods.indexOf(g) >= 0);
     const mine = Object.values(co.fac).map(f => f.recipe).filter(g => pool.indexOf(g) >= 0);
     const r1 = rnd(L), r2 = rnd(L), r3 = rnd(L), r4 = rnd(L), r5 = rnd(L), r6 = rnd(L);
@@ -1567,107 +1887,143 @@
     const qty = Math.round((lo + r4 * (hi - lo)) / step) * step;
     const cap = RECIPES[g].batches * RECIPES[g].out;
     const need = Math.ceil(qty / cap);
-    const deadline = Math.min(s.maxDays - 1, s.day + need + 10 + Math.floor(r5 * 7));
+    const deadline = Math.min(s.mode === 'endless' ? Infinity : s.maxDays - 1, s.day + need + 10 + Math.floor(r5 * 7));
     if (deadline - s.day < need + 6) return null;
     const unit = Math.round(GOODS[g].base * PF[port][g] * (1.06 + r6 * 0.1));
     const bonus = niceGoal(qty * unit * 0.15);
-    return { id: ++co.seq, g, qty, got: 0, port, deadline, unit, bonus, paid: 0, expires: s.day + 5 };
+    return { id: ++co.seq, g, qty, got: 0, port, deadline, unit, bonus, paid: 0, expires: s.day + 5, deposit: Math.round(qty * unit * 0.05) };
   }
   function dealsTick(s) {
     const co = s.co;
     for (const d of co.deals.slice()) {
       if (s.day > d.deadline) {
         co.deals.splice(co.deals.indexOf(d), 1);
-        const msg = 'Big order for ' + GOODS[d.g].name.toLowerCase() + ' in ' + PORTS[d.port].name + ' expired: ' + fmtN(d.got) + ' of ' + fmtN(d.qty) + ' t delivered, no bonus.';
+        const back = d.got * 2 >= d.qty;
+        if (back) s.cash += d.deposit;
+        const msg = 'Big order for ' + GOODS[d.g].name.toLowerCase() + ' in ' + PORTS[d.port].name + ' expired: ' + fmtN(d.got) + ' of ' + fmtN(d.qty) + ' t delivered, no bonus' + (back ? ', deposit returned.' : ', deposit kept by the buyer.');
         coLog(s, msg, 'bad'); repNote(s, msg);
       }
     }
     if (co.dealOffer && s.day > co.dealOffer.expires) co.dealOffer = null;
-    if (coStage(s) >= 2 && Object.keys(co.fac).length && !co.dealOffer && co.deals.length < 2 && s.day >= co.nextDeal) {
-      co.nextDeal = s.day + rInt(s.rngL, 8, 12);
+    if (coStage(s) >= STAGE.factory && Object.keys(co.fac).length && !co.dealOffer && co.deals.length < 2 && s.day >= co.nextDeal) {
+      co.nextDeal = s.day + rInt(coRng(s), 8, 12);
       co.dealOffer = makeDeal(s);
       if (co.dealOffer) { const d = co.dealOffer; addNews(s, { kind: 'deal', text: 'Big order offered: ' + fmtN(d.qty) + ' t ' + GOODS[d.g].name.toLowerCase() + ' to ' + PORTS[d.port].name + ' by day ' + d.deadline + '. See the Company tab.', port: d.port, good: d.g }); repNote(s, 'A big order is on offer in the Company tab.'); }
     }
   }
   function acceptDeal(s) {
-    const co = s.co, d = co && co.dealOffer;
+    if (!coCan(s)) return fail('Not now');
+    const co = s.co, d = co.dealOffer;
     if (!d) return fail('No order on offer');
     if (co.deals.length >= 2) return fail('You can run two big orders at a time');
+    if (s.cash < d.deposit) return fail('Not enough cash for the deposit');
+    s.cash -= d.deposit;
     co.dealOffer = null; co.deals.push(d);
-    coLog(s, 'Big order accepted: ' + d.qty + ' t ' + GOODS[d.g].name.toLowerCase() + ' to ' + PORTS[d.port].name + ' by day ' + d.deadline + '.', 'co');
+    coLog(s, 'Big order accepted: ' + d.qty + ' t ' + GOODS[d.g].name.toLowerCase() + ' to ' + PORTS[d.port].name + ' by day ' + d.deadline + '. Deposit ' + rm(d.deposit) + '.', 'co');
     return { ok: true };
   }
-  function declineDeal(s) { if (!s.co || !s.co.dealOffer) return fail('No order on offer'); s.co.dealOffer = null; return { ok: true }; }
+  function declineDeal(s) { if (!coCan(s) || !s.co.dealOffer) return fail('No order on offer'); s.co.dealOffer = null; return { ok: true }; }
   // Deliver q t to a big order; unitCost is the cost basis per tonne, pl the business that delivered (or null for your ship).
   function dealDeliver(s, d, q, unitCost, pl) {
     const co = s.co;
-    q = Math.min(q, d.qty - d.got); if (q <= 0) return 0;
+    q = Math.min(Math.floor(q), d.qty - d.got); if (q <= 0) return 0;
     const pay = Math.round(q * d.unit);
     d.got += q; d.paid += pay; s.cash += pay; s.st.trades++;
     s.st.maxSale = Math.max(s.st.maxSale, pay);
     plSale(co, pl, pay, unitCost * q); co.rep.delivered += q;
     if (d.got >= d.qty) {
-      s.cash += d.bonus; co.dealsDone++; plSale(co, pl, d.bonus, 0);
+      s.cash += d.bonus + d.deposit; co.dealsDone++; plSale(co, pl, d.bonus, 0);
+      if (!pl) co.dealShip++;
       co.deals.splice(co.deals.indexOf(d), 1);
-      const msg = 'Big order complete: ' + fmtN(d.qty) + ' t ' + GOODS[d.g].name.toLowerCase() + ' delivered to ' + PORTS[d.port].name + '. Bonus ' + rm(d.bonus) + '.';
+      const msg = 'Big order complete: ' + fmtN(d.qty) + ' t ' + GOODS[d.g].name.toLowerCase() + ' delivered to ' + PORTS[d.port].name + '. Bonus ' + rm(d.bonus) + ' and your deposit back.';
       coLog(s, msg, 'good'); repNote(s, msg);
     }
     return q;
   }
-  /* ---- Company alerts: strikes, breakdowns, booms ---- */
+  /* ---- Company alerts: strikes, breakdowns, booms, blight, price wars ---- */
   function strikeAt(s, p) { return !!s.co && s.co.alerts.some(a => a.kind === 'strike' && a.p === p && a.choice !== 'settle' && s.day >= a.day && s.day <= a.end); }
   function alertOpen(s, a) { return a.choice === null && a.choices.length > 0 && s.day <= a.end; }
   function stockValue(w) { let v = 0; for (const g in w.stock) v += w.stock[g].q * w.stock[g].cost; return v; }
+  function newAlert(s, kind) { return { id: ++s.co.seq, kind, p: null, g: null, day: s.day, end: s.day, cost: 0, text: '', choices: [], choice: null, byMgr: false }; }
+  function pushAlert(s, a) {
+    const co = s.co;
+    co.alerts.push(a); if (co.alerts.length > 12) co.alerts.shift();
+    coLog(s, a.text, a.kind === 'boom' ? 'good' : 'bad'); repNote(s, a.text);
+    mgrDecide(s, a);
+  }
+  function breakdownAlert(s, p) {
+    const co = s.co, f = co.fac[p], a = newAlert(s, 'breakdown');
+    a.p = p; a.end = s.day + 4; f.downUntil = a.end;
+    a.cost = niceGoal(CO.facCost * 0.2 * f.lvl + netWorth(s) * 0.003);
+    a.text = 'Your ' + RECIPES[f.recipe].name.toLowerCase() + ' in ' + PORTS[p].name + ' has broken down. Spare parts arrive on day ' + (a.end + 1) + '.';
+    a.choices = [{ id: 'repair', label: 'Repair now · ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait for the parts', cost: 0 }];
+    return a;
+  }
   function alertsTick(s) {
-    const co = s.co, L = s.rngL;
+    const co = s.co, L = coRng(s);
     co.alerts = co.alerts.filter(a => s.day <= a.end + 4);
     const whs = Object.keys(co.wh), facs = Object.keys(co.fac);
-    if (!whs.length || s.day < co.nextAlert || s.day >= s.maxDays - 2) return;
+    // Overtime wears machines: each overtime day risks a breakdown.
+    facs.forEach(p => { const f = co.fac[p]; if (f.otUntil >= s.day && f.downUntil < s.day && rnd(L) < 0.05 && !co.alerts.some(a => a.kind === 'breakdown' && a.p === p && s.day <= a.end)) pushAlert(s, breakdownAlert(s, p)); });
+    if (!whs.length || s.day < co.nextAlert || (s.mode !== 'endless' && s.day >= s.maxDays - 2)) return;
     const roll = rnd(L), k1 = rnd(L), k2 = rnd(L), k3 = rnd(L), k4 = rnd(L);
     if (roll > 0.045 || co.alerts.some(a => alertOpen(s, a))) return;
-    const kinds = ['strike']; if (facs.length) kinds.push('breakdown', 'boom');
+    const ests = Object.keys(co.est), shops = Object.keys(co.shop);
+    const kinds = ['strike']; if (facs.length) kinds.push('breakdown', 'boom'); if (ests.length) kinds.push('blight'); if (shops.length) kinds.push('pricewar');
     const kind = kinds[Math.floor(k1 * kinds.length)];
-    const a = { id: ++co.seq, kind, p: null, g: null, day: s.day, end: s.day, cost: 0, text: '', choices: [], choice: null };
+    let a;
     if (kind === 'strike') {
       const p = whs[Math.floor(k2 * whs.length)];
-      a.p = p; a.end = s.day + 2 + Math.floor(k3 * 3);
-      a.cost = Math.max(10000, niceGoal(12000 + stockValue(co.wh[p]) * 0.03));
+      a = newAlert(s, kind); a.p = p; a.end = s.day + 2 + Math.floor(k3 * 3);
+      a.cost = Math.max(10000, niceGoal(12000 + stockValue(co.wh[p]) * 0.03 + netWorth(s) * 0.002));
       a.text = 'Dockers strike at ' + PORTS[p].name + '. Your warehouse there cannot load, unload, buy or sell until day ' + (a.end + 1) + '.';
       a.choices = [{ id: 'settle', label: 'Pay the dockers ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait it out', cost: 0 }];
     } else if (kind === 'breakdown') {
-      const p = facs[Math.floor(k2 * facs.length)], f = co.fac[p];
-      a.p = p; a.end = s.day + 4; f.downUntil = a.end;
-      a.cost = niceGoal(CO.facCost * 0.2 * f.lvl);
-      a.text = 'Your ' + RECIPES[f.recipe].name.toLowerCase() + ' in ' + PORTS[p].name + ' has broken down. Spare parts arrive on day ' + (a.end + 1) + '.';
-      a.choices = [{ id: 'repair', label: 'Repair now · ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait for the parts', cost: 0 }];
-    } else {
+      a = breakdownAlert(s, facs[Math.floor(k2 * facs.length)]);
+    } else if (kind === 'boom') {
       const g = co.fac[facs[Math.floor(k2 * facs.length)]].recipe;
       const best = s.ports.slice().sort((x, y) => PF[y][g] - PF[x][g] || (x < y ? -1 : 1)).slice(0, 3);
       const p = best[Math.floor(k3 * best.length)];
-      a.p = p; a.g = g; a.end = s.day + 5 + Math.floor(k4 * 4);
+      a = newAlert(s, kind); a.p = p; a.g = g; a.end = s.day + 5 + Math.floor(k4 * 4);
       const mult = 1.3 + k4 * 0.15;
       const e = { id: ++s.seq, scope: 'local', port: p, good: g, kind: 'shortage', mult, start: s.day, end: a.end, headline: GOODS[g].name + ' sells out in ' + PORTS[p].name + ': buyers pay a premium', rumoured: false, announced: true };
       s.events.push(e);
       addNews(s, { kind: 'shortage', text: e.headline, port: p, good: g, ev: e.id, end: e.end });
       a.text = 'Demand for ' + GOODS[g].name.toLowerCase() + ' booms in ' + PORTS[p].name + ': prices about ' + Math.round((mult - 1) * 100) + '% higher until day ' + a.end + '.';
-      a.choices = [{ id: 'overtime', label: 'Run overtime: double output, fees +50%', cost: 0 }, { id: 'normal', label: 'Business as usual', cost: 0 }];
+      a.choices = [{ id: 'overtime', label: 'Run overtime: double output, fees +50%, breakdown risk', cost: 0 }, { id: 'normal', label: 'Business as usual', cost: 0 }];
+    } else if (kind === 'blight') {
+      const p = ests[Math.floor(k2 * ests.length)], e = co.est[p];
+      a = newAlert(s, kind); a.p = p; a.g = e.g; a.end = s.day + 5; e.blightUntil = a.end;
+      a.cost = niceGoal(30000 * e.lvl + netWorth(s) * 0.002);
+      a.text = (e.g === 'coal' ? 'Flooding in your coal mine' : 'Blight on your ' + ESTATES[e.g].name.toLowerCase()) + ' near ' + PORTS[p].name + ': half the usual harvest until day ' + (a.end + 1) + '.';
+      a.choices = [{ id: 'spray', label: (e.g === 'coal' ? 'Pump it out · ' : 'Spray now · ') + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Let it pass', cost: 0 }];
+    } else {
+      const p = shops[Math.floor(k2 * shops.length)], sh = co.shop[p];
+      a = newAlert(s, kind); a.p = p; a.end = s.day + 5; sh.warUntil = a.end;
+      a.text = RIVAL.name + ' opens a cut-price shop next to yours in ' + PORTS[p].name + '. Your customers will drift away until day ' + (a.end + 1) + '.';
+      a.choices = [{ id: 'match', label: 'Match his prices (value pricing until then)', cost: 0 }, { id: 'hold', label: 'Hold your prices', cost: 0 }];
     }
-    co.alerts.push(a); co.nextAlert = s.day + 6 + Math.floor(k4 * 5);
-    coLog(s, a.text, kind === 'boom' ? 'good' : 'bad'); repNote(s, a.text);
+    co.nextAlert = s.day + 6 + Math.floor(k4 * 5);
+    pushAlert(s, a);
   }
   function coChoose(s, id, cid) {
-    const co = s.co; if (!co || s.phase === 'ended') return fail('Not now');
+    if (!coCan(s)) return fail('Not now');
+    const co = s.co;
     const a = co.alerts.find(x => x.id === id); if (!a) return fail('That is over');
     if (!alertOpen(s, a)) return fail('Already decided');
     const c = a.choices.find(x => x.id === cid); if (!c) return fail('Unknown choice');
     if (c.cost) { if (s.cash < c.cost) return fail('Not enough cash'); s.cash -= c.cost; s.st.costs += c.cost; }
     a.choice = cid;
-    if (cid === 'repair' && co.fac[a.p]) { co.fac[a.p].downUntil = s.day - 1; co.fac[a.p].note = 'Repaired'; }
+    if (!c.cost && a.choices[0].cost && cid === a.choices[1].id) co.waited++;
+    if (cid === 'repair' && own(co.fac, a.p)) { co.fac[a.p].downUntil = s.day - 1; co.fac[a.p].note = 'Repaired'; }
     if (cid === 'overtime') Object.values(co.fac).forEach(f => { if (f.recipe === a.g) f.otUntil = a.end; });
     if (cid === 'settle') coLog(s, 'The strike at ' + PORTS[a.p].name + ' is over.', 'good');
+    if (cid === 'spray' && own(co.est, a.p)) co.est[a.p].blightUntil = s.day - 1;
+    if (cid === 'match' && own(co.shop, a.p)) co.shop[a.p].matchUntil = a.end;
     afterChange(s);
     return { ok: true };
   }
+  /* ---- Valuation ---- */
   function coValue(s, atCost) {
     const co = s.co; if (!co) return 0;
     let v = 0;
@@ -1676,10 +2032,21 @@
       for (const g in w.stock) v += w.stock[g].q * (atCost ? w.stock[g].cost : baseMid(s, p, g) * (1 - spreadOf(s) / 2));
     });
     Object.keys(co.fac).forEach(p => { v += co.fac[p].invest * 0.7; });
+    Object.keys(co.est || {}).forEach(p => { v += co.est[p].invest * 0.7; });
+    Object.keys(co.shop || {}).forEach(p => { const sh = co.shop[p]; v += sh.invest * 0.7 + shopRecv(sh) * 0.9; });
     co.routes.forEach(r => { if (r.trip) v += r.trip.q * r.trip.unit; });
     return v;
   }
-  function coDaily(s) { const co = s.co; if (!co) return 0; let up = 0; Object.keys(co.wh).forEach(p => { up += co.wh[p].lvl * CO.whUpkeep; }); Object.keys(co.fac).forEach(p => { up += co.fac[p].lvl * CO.facUpkeep; }); return up; }
+  function coDaily(s) {
+    const co = s.co; if (!co) return 0;
+    let up = 0;
+    Object.keys(co.wh).forEach(p => { up += co.wh[p].lvl * CO.whUpkeep; });
+    Object.keys(co.fac).forEach(p => { up += co.fac[p].lvl * CO.facUpkeep; });
+    Object.keys(co.est || {}).forEach(p => { up += co.est[p].lvl * CO.estUpkeep; });
+    Object.keys(co.shop || {}).forEach(p => { up += co.shop[p].lvl * CO.shopUpkeep; });
+    Object.keys(co.mgr || {}).forEach(p => { up += MGR_STYLES[co.mgr[p].style].wage; });
+    return up;
+  }
   function coSummary(s) {
     const co = s.co;
     return {
@@ -1688,14 +2055,122 @@
       routes: co.routes.map(r => Object.assign({}, r, { quote: routeQuote(s, r.from, r.to, r.qty) })),
     };
   }
+  // Validate the company block of a save (called from upgradeRun).
+  function validateCo(s) {
+    const co = s.co;
+    const intIn = (x, lo, hi) => Number.isInteger(x) && x >= lo && x <= hi;
+    const numIn = (x, lo, hi) => Number.isFinite(x) && x >= lo && x <= hi;
+    saveRequire(saveRecord(co) && saveRecord(co.wh) && saveRecord(co.fac) && Array.isArray(co.routes));
+    saveNumbers(co, ['reserve', 'seq', 'made', 'trips', 'autoBought', 'autoSold', 'upkeep', 'built']);
+    saveRequire(numIn(co.reserve, 0, 5e6) && co.routes.length <= 6);
+    ['est', 'shop', 'mgr', 'here'].forEach(k => saveRequire(co[k] === undefined || saveRecord(co[k])));
+    saveRequire(Object.values(co.wh).every(saveRecord) && Object.values(co.fac).every(saveRecord) && co.routes.every(saveRecord));
+    ['est', 'shop', 'mgr'].forEach(k => saveRequire(co[k] === undefined || Object.values(co[k]).every(saveRecord)));
+    coFill(co);
+    saveNumbers(co, ['nextDeal', 'dealsDone', 'nextAlert', 'harvested', 'waited', 'dealShip']);
+    ['seenStage', 'toldStage', 'toldNeg', 'minStage'].forEach(k => saveRequire(co[k] === undefined || intIn(co[k], 0, STAGES.length)));
+    Object.keys(co.here).forEach(g => saveRequire(s.goods.includes(g) && numIn(co.here[g], 0, 1e6)));
+    saveRequire(saveRecord(co.rep) && Array.isArray(co.rep.notes) && co.rep.notes.length <= 8 && co.rep.notes.every(n => typeof n === 'string'));
+    saveNumbers(co.rep, ['from', 'bought', 'sold', 'profit', 'made', 'shipped', 'delivered', 'upkeep', 'fees', 'freight']);
+    const dealOk = d => {
+      saveRequire(saveRecord(d) && saveHas(RECIPES, d.g) && s.goods.includes(d.g) && s.ports.includes(d.port));
+      saveNumbers(d, ['id', 'qty', 'got', 'deadline', 'unit', 'bonus', 'paid', 'expires', 'deposit']);
+      saveRequire(intIn(d.qty, 1, 1000) && intIn(d.got, 0, d.qty - 1) && numIn(d.unit, 1, 1e6) && numIn(d.bonus, 0, 1e8) && numIn(d.deposit, 0, 1e8) && numIn(d.paid, 0, 1e11));
+    };
+    saveRequire(Array.isArray(co.deals) && co.deals.length <= 2); co.deals.forEach(dealOk);
+    if (co.dealOffer !== null) dealOk(co.dealOffer);
+    saveRequire(Array.isArray(co.alerts) && co.alerts.length <= 12);
+    co.alerts.forEach(a => {
+      saveRequire(saveRecord(a) && saveHas(ALERT_CHOICES, a.kind) && typeof a.text === 'string' && Array.isArray(a.choices) && a.choices.length === 2);
+      const allowed = ALERT_CHOICES[a.kind];
+      saveRequire(a.choice === null || allowed.includes(a.choice));
+      saveRequire(a.p === null || s.ports.includes(a.p)); saveRequire(a.g === null || s.goods.includes(a.g));
+      saveRequire(a.byMgr === undefined || typeof a.byMgr === 'boolean');
+      saveNumbers(a, ['id', 'day', 'end', 'cost']); saveRequire(numIn(a.cost, 0, 1e9));
+      a.choices.forEach((c, i) => { saveRequire(saveRecord(c) && c.id === allowed[i] && typeof c.label === 'string'); saveNumbers(c, ['cost']); saveRequire(numIn(c.cost, 0, 1e9)); });
+    });
+    Object.keys(co.wh).forEach(p => {
+      const w = co.wh[p];
+      saveRequire(s.ports.includes(p) && intIn(w.lvl, 1, CO.whMaxLvl) && numIn(w.invest, 0, 1e9) && saveRecord(w.stock) && Array.isArray(w.orders) && w.orders.length <= CO.orderMax);
+      Object.keys(w.stock).forEach(g => { saveRequire(s.goods.includes(g)); const c = w.stock[g]; saveNumbers(c, ['q', 'cost', 'ok']); saveRequire(c.q > 0 && numIn(c.cost, 0, 1e7) && numIn(c.ok, 0, c.q)); });
+      saveRequire(whUsed(w) <= whCap(w) + 1e-6);
+      w.orders.forEach(o => { saveRequire(saveRecord(o) && saveHas(ORDER_MODES, o.kind) && ORDER_MODES[o.kind].includes(o.mode) && s.goods.includes(o.g)); saveNumbers(o, ['id', 'qty', 'done']); saveRequire(intIn(o.qty, 1, 1000)); });
+      saveRequire(saveRecord(w.pl)); saveNumbers(w.pl, ['bought', 'sold', 'profit', 'upkeep']);
+    });
+    Object.keys(co.fac).forEach(p => { const f = co.fac[p]; saveRequire(own(co.wh, p) && saveHas(RECIPES, f.recipe) && intIn(f.lvl, 1, CO.facMaxLvl)); saveNumbers(f, ['made', 'invest', 'added', 'upkeep', 'downUntil', 'otUntil']); });
+    Object.keys(co.est).forEach(p => { const e = co.est[p]; saveRequire(own(co.wh, p) && saveHas(ESTATES, e.g) && s.goods.includes(e.g) && intIn(e.lvl, 1, CO.estMaxLvl) && typeof e.note === 'string'); saveNumbers(e, ['made', 'added', 'upkeep', 'invest', 'blightUntil']); });
+    Object.keys(co.shop).forEach(p => {
+      const sh = co.shop[p];
+      saveRequire(own(co.wh, p) && intIn(sh.lvl, 1, CO.shopMaxLvl) && saveHas(SHOP_TIERS, sh.tier) && saveHas(SHOP_TERMS, sh.terms) && numIn(sh.rep, 0.5, 1.5) && typeof sh.note === 'string');
+      saveNumbers(sh, ['sold', 'profit', 'upkeep', 'bad', 'collected', 'invest', 'matchUntil', 'warUntil']);
+      saveRequire(Array.isArray(sh.recv) && sh.recv.length <= 64 && sh.recv.every(r => Array.isArray(r) && r.length === 2 && Number.isInteger(r[0]) && numIn(r[1], 0, 1e10)));
+      saveRequire(Array.isArray(sh.carry) && sh.carry.every(g => saveHas(SHOP_DEMAND, g)));
+    });
+    Object.keys(co.mgr).forEach(p => { const m = co.mgr[p]; saveRequire(own(co.wh, p) && saveHas(MGR_STYLES, m.style)); saveNumbers(m, ['since', 'bought', 'sold', 'wages', 'decided']); });
+    co.routes.forEach(r => {
+      saveRequire(own(co.wh, r.from) && s.ports.includes(r.to) && r.from !== r.to && ['wh', 'mkt'].includes(r.dest) && s.goods.includes(r.g) && typeof r.paused === 'boolean');
+      saveNumbers(r, ['id', 'qty', 'trips', 'sold', 'profit', 'freight', 'wait']); saveRequire(intIn(r.qty, 10, 200));
+      if (r.trip != null) { saveNumbers(r.trip, ['q', 'unit', 'depart', 'arrive']); saveRequire(numIn(r.trip.q, 1, 200) && numIn(r.trip.unit, 0, 1e7)); }
+    });
+    if (s.rngC !== undefined) saveRequire(Array.isArray(s.rngC) && s.rngC.length === 4 && s.rngC.every(Number.isInteger));
+  }
+
+  /* ================= Endless mode ================= */
+  const CHAPTER_TWISTS = ['typhoon', 'boom', 'calm', 'credit', null, null];
+  function newEndless(s) {
+    return { ch: 1, start: 1, baseLevel: s.level, nw0: 0, voy0: 0, lpOwed: 0, lpPaid: 0, ahead: 0, aheadBest: 0, neg: 0, bankrupt: false, seen: 0, reports: [] };
+  }
+  function endlessTick(s) {
+    const E = s.endless;
+    const nw = netWorth(s);
+    E.neg = nw < 0 ? E.neg + 1 : 0;
+    if (E.neg >= 10 && !E.bankrupt) { E.bankrupt = true; log(s, 'Ten days under water: your creditors close the house.', 'bad'); }
+    if (s.day >= s.maxDays) chapterClose(s);
+  }
+  function chapterClose(s) {
+    const E = s.endless, W = s.rngW;
+    checkBounties(s, true);
+    const nw = netWorth(s), done = s.bounties.filter(b => b.done);
+    const beat = nw > s.rival.nw, voy = s.st.voyages - E.voy0;
+    let lp = 0;
+    if (voy >= 2) {
+      lp = Math.min(30, 6 + done.reduce((a, b) => a + b.lp, 0) + (beat ? 8 : 0));
+      if (E.ch >= 7) lp = Math.round(lp / 2);
+    }
+    E.ahead = beat ? E.ahead + 1 : 0; E.aheadBest = Math.max(E.aheadBest, E.ahead);
+    E.reports.push({ ch: E.ch, from: E.start, to: s.day, nw0: Math.round(E.nw0), nw: Math.round(nw), rival: Math.round(s.rival.nw), beat, bounties: done.length, lp, voyages: voy, level: s.level, twist: s.twist });
+    if (E.reports.length > 8) E.reports.shift();
+    E.lpOwed += lp;
+    // Next chapter
+    E.ch++; E.start = s.day; E.nw0 = nw; E.voy0 = s.st.voyages;
+    s.maxDays = s.day + CHAPTER_DAYS;
+    const lvl = Math.min(10, E.baseLevel + Math.floor((E.ch - 1) / 2));
+    if (lvl > s.level) { s.level = lvl; log(s, 'The seas grow harder: Monsoon level ' + lvl + '.', 'monsoon'); }
+    s.twist = CHAPTER_TWISTS[Math.floor(rnd(W) * CHAPTER_TWISTS.length)];
+    s.monsoon.shiftDay = E.start + Math.round(CHAPTER_DAYS / 2) + rInt(W, -4, 4);
+    s.monsoon.forecast = s.monsoon.shiftDay + rInt(W, -2, 2);
+    s.monsoon.shifted = false;
+    s.rival.base = s.rival.nw; s.rival.target = Math.max(s.rival.nw * 1.25, endlessRivalTarget(s, E.ch, s.rival.luck));
+    genBounties(s);
+    addNews(s, { kind: 'monsoon', text: 'Chapter ' + E.ch + ' begins. ' + (s.twist ? TWISTS[s.twist].name + ': ' + TWISTS[s.twist].desc : 'Fair trading weather.') + ' New bounties are posted.' });
+    log(s, 'Chapter ' + (E.ch - 1) + ' closed: worth ' + rm(nw) + (beat ? ', ahead of ' : ', behind ') + RIVAL.name + '.', beat ? 'good' : 'info');
+  }
+  // Pay Legacy banked at chapter closes into the player's Legacy. Called by the UI after each action.
+  function collectEndlessLP(s, meta) {
+    if (!s || s.mode !== 'endless' || !s.endless || !meta) return 0;
+    const E = s.endless, lp = E.lpOwed;
+    if (!lp) return 0;
+    E.lpOwed = 0; E.lpPaid += lp; meta.lp += lp; meta.lpTotal += lp;
+    return lp;
+  }
 
   /* ================= Waiting & ending ================= */
   function waitDay(s) {
     if (!canAct(s)) return fail('Not now');
-    if (s.day >= s.maxDays) return fail('The season is over');
+    if (s.mode !== 'endless' && s.day >= s.maxDays) return fail('The season is over');
     dayTick(s);
     const c = checkCollectors(s);
-    if (s.day >= s.maxDays) s.lastDay = true;
+    if (s.mode !== 'endless' && s.day >= s.maxDays) s.lastDay = true;
     return { ok: true, text: c };
   }
   function rankFor(nw) { let r = 0; RANKS.forEach((k, i) => { if (nw >= k.min) r = i; }); return r; }
@@ -1724,16 +2199,20 @@
     if (nw > s.st.peak) s.st.peak = nw;
     s.phase = 'ended'; s.pending = null;
     const rank = rankFor(nw);
-    const base = rewardEligible ? Math.max(1, Math.round(seasonLP(nw, s.level) * rewardFraction)) : 0;
-    const rewardNote = !rewardEligible
+    const E = s.mode === 'endless' ? s.endless : null;
+    const lenBonus = s.mode === 'normal' ? Math.max(1, Math.sqrt(s.maxDays / 90)) : 1;
+    const base = E ? (rewardEligible && E.ch >= 2 ? Math.min(30, Math.round(seasonLP(nw, s.level) * 0.4)) + E.lpOwed : E.lpOwed)
+      : rewardEligible ? Math.max(1, Math.round(seasonLP(nw, s.level) * rewardFraction * lenBonus)) : 0;
+    if (E) { E.lpPaid += base; E.lpOwed = 0; }
+    const rewardNote = E ? (E.ch >= 2 ? 'Retirement pays up to 30 Legacy plus anything banked at the last chapter close.' : 'Close at least one chapter to earn a retirement payout.') : !rewardEligible
       ? 'Complete a voyage to earn season Legacy. Shipwrecks at sea also count.'
       : rewardFraction < 1 ? 'Season Legacy is scaled to the days played. A season with a completed voyage or shipwreck earns at least 1 LP.' : '';
     const f = { nw, cash: Math.round(s.cash), sold: Math.round(sold), ship, company, debts, rank, rankName: RANKS[rank].name, lp: base, lpBase: base, streakBonus: 0, levelUp: false, newAch: [], day: s.day, rewardEligible, rewardFraction, rewardNote };
     checkBounties(s, true);
     f.rivalNW = rivalFinal(s);
     f.beatRival = nw > f.rivalNW;
-    f.rivalLP = rewardEligible && f.beatRival ? Math.round(8 * (1 + 0.2 * s.level)) : 0;
-    f.bountyLP = rewardEligible ? (s.bounties || []).filter(b => b.done).reduce((a, b) => a + b.lp, 0) : 0;
+    f.rivalLP = rewardEligible && f.beatRival && !E ? Math.round(8 * (1 + 0.2 * s.level)) : 0;
+    f.bountyLP = rewardEligible && !E ? Math.round((s.bounties || []).filter(b => b.done).reduce((a, b) => a + b.lp, 0) * rewardFraction) : 0;
     f.lp = base + f.rivalLP + f.bountyLP;
     s.final = f;
     if (meta) {
@@ -1748,7 +2227,7 @@
         if (d.last !== s.dateKey) {
           d.streak = d.last === dayKeyShift(s.dateKey, -1) ? d.streak + 1 : 1;
           d.last = s.dateKey;
-          f.streakBonus = Math.min(d.streak, 7);
+          d.total = (d.total || 0) + 1;
         }
         d.bestStreak = Math.max(d.bestStreak || 0, d.streak);
         d.plays[s.dateKey] = (d.plays[s.dateKey] || 0) + 1;
@@ -1759,6 +2238,14 @@
       if (rewardEligible && s.mode === 'normal' && s.level === meta.levelMax && nw >= levelGoal(s) && meta.levelMax < 10) { meta.levelMax++; f.levelUp = meta.levelMax; }
       f.lp = base + f.streakBonus + f.rivalLP + f.bountyLP;
       meta.lp += f.lp; meta.lpTotal += f.lp;
+      if (E) {
+        const er = meta.endless;
+        er.runs++; er.chapters = Math.max(er.chapters, E.ch - 1); er.bestDay = Math.max(er.bestDay, s.day);
+        if (nw > er.best) { er.best = nw; f.endlessBest = true; }
+        er.hall.push({ t: Date.now(), nw, day: s.day, ch: E.ch - 1, captain: s.captain });
+        er.hall.sort((a, b) => b.nw - a.nw); if (er.hall.length > 5) er.hall.length = 5;
+        f.chapters = E.ch - 1; f.bankrupt = !!E.bankrupt;
+      }
       meta.history.unshift({ t: Date.now(), mode: s.mode, date: s.dateKey, captain: s.captain, level: s.level, nw, rank, twist: s.twist });
       if (meta.history.length > 40) meta.history.length = 40;
       f.newAch = checkAch(s, meta, rewardEligible);
@@ -1768,37 +2255,65 @@
 
   /* ================= Achievements ================= */
   const ACH = [
-    { id: 'first_profit', name: 'Open for Business', desc: 'Make your first profitable sale.', lp: 5, test: s => s && s.st.profitSales >= 1 },
-    { id: 'first_season', name: 'Sea Legs', desc: 'Finish a season.', lp: 5, test: (s, m, end) => !!end },
-    { id: 'nw_250k', name: 'Quarter Million', desc: 'Reach RM 250k net worth.', lp: 5, test: s => s && s.st.peak >= 250000 },
-    { id: 'nw_1m', name: 'Ringgit Millionaire', desc: 'Reach RM 1M net worth.', lp: 10, test: s => s && s.st.peak >= 1e6 },
-    { id: 'nw_5m', name: 'Big Towkay', desc: 'Reach RM 5M net worth.', lp: 15, test: s => s && s.st.peak >= 5e6 },
-    { id: 'nw_10m', name: 'Ten Million Club', desc: 'Reach RM 10M net worth.', lp: 20, test: s => s && s.st.peak >= 1e7 },
-    { id: 'nw_25m', name: 'Legend of the Straits', desc: 'Reach RM 25M net worth.', lp: 30, test: s => s && s.st.peak >= 2.5e7 },
-    { id: 'fast_1m', name: 'Express Lane', desc: 'Reach RM 1M before day 25.', lp: 15, test: s => s && s.st.m1Day > 0 && s.st.m1Day < 25 },
-    { id: 'clean_books', name: 'Clean Books', desc: 'Finish as Merchant or better without ever borrowing.', lp: 15, test: (s, m, end) => end && s && !s.st.borrowed && s.final && s.final.rank >= MERCHANT_RANK },
-    { id: 'paid_in_full', name: 'Paid in Full', desc: 'Repay the Ah Long before the due date.', lp: 5, test: s => s && s.st.alongRepaid },
-    { id: 'weathered', name: 'Weathered', desc: 'Ride out 3 storms in one season.', lp: 10, test: s => s && s.st.storms >= 3 },
-    { id: 'full_steam', name: 'Full Steam Ahead', desc: 'Escape from pirates.', lp: 5, test: s => s && s.st.escapes >= 1 },
-    { id: 'ear', name: 'Ear to the Ground', desc: 'Sell at a profit into a shortage that was rumoured.', lp: 10, test: s => s && s.st.rumourProfit },
-    { id: 'signed', name: 'Signed, Sealed', desc: 'Deliver a contract.', lp: 5, test: s => s && s.st.contracts >= 1 },
-    { id: 'reliable', name: 'Reliable Partner', desc: 'Deliver 5 contracts in one season.', lp: 10, test: s => s && s.st.contracts >= 5 },
-    { id: 'whale', name: 'Whale', desc: 'Make a single sale worth RM 1M.', lp: 10, test: s => s && s.st.maxSale >= 1e6 },
-    { id: 'mover', name: 'Market Mover', desc: 'Move a price 25% in one trade.', lp: 5, test: s => s && s.st.maxMove >= 0.25 },
-    { id: 'fleet', name: 'Fleet Upgrade', desc: 'Buy a Feeder Ship or bigger.', lp: 10, test: s => s && s.st.bigShip },
-    { id: 'bulk_baron', name: 'Bulk Baron', desc: 'Own a Handysize Bulker.', lp: 15, test: s => s && s.ship.cls === 'handy' },
-    { id: 'king_fruits', name: 'King of Fruits', desc: 'Sell RM 500k of durian in one season.', lp: 10, test: s => s && s.st.durianSales >= 5e5 },
-    { id: 'regular', name: 'Regular', desc: 'Play the Daily Voyage 3 days running.', lp: 10, test: (s, m) => m.daily.streak >= 3 },
-    { id: 'habit', name: 'Creature of Habit', desc: 'Play the Daily Voyage 7 days running.', lp: 20, test: (s, m) => m.daily.streak >= 7 },
-    { id: 'rough', name: 'Rough Seas', desc: 'Finish Monsoon Level 3 as Merchant or better.', lp: 15, test: (s, m, end) => end && s && s.final && s.level >= 3 && s.final.rank >= MERCHANT_RANK },
-    { id: 'storm_born', name: 'Storm Born', desc: 'Finish Monsoon Level 6 as Merchant or better.', lp: 25, test: (s, m, end) => end && s && s.final && s.level >= 6 && s.final.rank >= MERCHANT_RANK },
-    { id: 'master', name: 'Master of Monsoons', desc: 'Finish Monsoon Level 10 as Merchant or better.', lp: 50, test: (s, m, end) => end && s && s.final && s.level >= 10 && s.final.rank >= MERCHANT_RANK },
-    { id: 'rival_beat', name: 'Upstart', desc: 'Finish a season worth more than Towkay Lim.', lp: 10, test: (s, m, end) => end && s && s.final && s.final.beatRival },
-    { id: 'rival_crush', name: 'Hostile Takeover', desc: 'Finish worth at least twice as much as Towkay Lim.', lp: 20, test: (s, m, end) => end && s && s.final && s.final.nw >= 2 * s.final.rivalNW },
-    { id: 'clean_sweep', name: 'Clean Sweep', desc: 'Complete all three bounties in one season.', lp: 15, test: s => s && s.bounties && s.bounties.length === 3 && s.bounties.every(b => b.done) },
-    { id: 'typhoon', name: 'Eye of the Storm', desc: 'Push through a typhoon.', lp: 10, test: s => s && s.st.typhoonPush },
-    { id: 'full_crew', name: 'Full Crew', desc: 'Unlock every captain.', lp: 20, test: (s, m) => CAPTAIN_IDS.every(c => !CAPTAINS[c].unlock || m.unlocks[CAPTAINS[c].unlock]) },
+    { id: 'first_profit', cat: 'Trade', name: 'Open for Business', desc: 'Make your first profitable sale.', lp: 5, test: s => s && s.st.profitSales >= 1 },
+    { id: 'first_season', cat: 'Voyages', name: 'Sea Legs', desc: 'Finish a season.', lp: 5, test: (s, m, end) => !!end },
+    { id: 'nw_250k', cat: 'Wealth', name: 'Quarter Million', desc: 'Reach RM 250k net worth.', lp: 5, test: s => s && s.st.peak >= 250000 },
+    { id: 'nw_1m', cat: 'Wealth', name: 'Ringgit Millionaire', desc: 'Reach RM 1M net worth.', lp: 10, test: s => s && s.st.peak >= 1e6 },
+    { id: 'nw_5m', cat: 'Wealth', name: 'Big Towkay', desc: 'Reach RM 5M net worth.', lp: 15, test: s => s && s.st.peak >= 5e6 },
+    { id: 'nw_10m', cat: 'Wealth', name: 'Ten Million Club', desc: 'Reach RM 10M net worth.', lp: 20, test: s => s && s.st.peak >= 1e7 },
+    { id: 'nw_25m', cat: 'Wealth', name: 'Legend of the Straits', desc: 'Reach RM 25M net worth.', lp: 30, test: s => s && s.st.peak >= 2.5e7 },
+    { id: 'fast_1m', cat: 'Wealth', name: 'Express Lane', desc: 'Reach RM 1M before day 25.', lp: 15, test: s => s && s.st.m1Day > 0 && s.st.m1Day < 25 },
+    { id: 'clean_books', cat: 'Mastery', name: 'Clean Books', desc: 'Finish as Merchant or better without ever borrowing.', lp: 15, test: (s, m, end) => end && s && !s.st.borrowed && s.final && s.final.rank >= MERCHANT_RANK },
+    { id: 'paid_in_full', cat: 'Trade', name: 'Paid in Full', desc: 'Repay the Ah Long before the due date.', lp: 5, test: s => s && s.st.alongRepaid },
+    { id: 'weathered', cat: 'Voyages', name: 'Weathered', desc: 'Ride out 3 storms in one season.', lp: 10, test: s => s && s.st.storms >= 3 },
+    { id: 'full_steam', cat: 'Voyages', name: 'Full Steam Ahead', desc: 'Escape from pirates.', lp: 5, test: s => s && s.st.escapes >= 1 },
+    { id: 'ear', cat: 'Trade', name: 'Ear to the Ground', desc: 'Sell at a profit into a shortage that was rumoured.', lp: 10, test: s => s && s.st.rumourProfit },
+    { id: 'signed', cat: 'Trade', name: 'Signed, Sealed', desc: 'Deliver a contract.', lp: 5, test: s => s && s.st.contracts >= 1 },
+    { id: 'reliable', cat: 'Trade', name: 'Reliable Partner', desc: 'Deliver 5 contracts in one season.', lp: 10, test: s => s && s.st.contracts >= 5 },
+    { id: 'whale', cat: 'Trade', name: 'Whale', desc: 'Make a single sale worth RM 1M.', lp: 10, test: s => s && s.st.maxSale >= 1e6 },
+    { id: 'mover', cat: 'Trade', name: 'Market Mover', desc: 'Move a price 25% in one trade.', lp: 5, test: s => s && s.st.maxMove >= 0.25 },
+    { id: 'fleet', cat: 'Voyages', name: 'Fleet Upgrade', desc: 'Buy a Feeder Ship or bigger.', lp: 10, test: s => s && s.st.bigShip },
+    { id: 'bulk_baron', cat: 'Voyages', name: 'Bulk Baron', desc: 'Own a Handysize Bulker.', lp: 15, test: s => s && s.ship.cls === 'handy' },
+    { id: 'king_fruits', cat: 'Trade', name: 'King of Fruits', desc: 'Sell RM 500k of durian in one season.', lp: 10, test: s => s && s.st.durianSales >= 5e5 },
+    { id: 'regular', cat: 'Daily', name: 'Regular', desc: 'Play the Daily Voyage 3 times.', lp: 10, test: (s, m) => (m.daily.total || 0) >= 3 || m.daily.bestStreak >= 3, prog: (s, m) => [m.daily.total || 0, 3] },
+    { id: 'habit', cat: 'Daily', name: 'Creature of Habit', desc: 'Play the Daily Voyage 10 times.', lp: 20, test: (s, m) => (m.daily.total || 0) >= 10 || m.daily.bestStreak >= 7, prog: (s, m) => [m.daily.total || 0, 10] },
+    { id: 'rough', cat: 'Mastery', name: 'Rough Seas', desc: 'Finish Monsoon Level 3 as Merchant or better.', lp: 15, noEndless: true, test: (s, m, end) => end && s && s.final && s.mode !== 'endless' && s.level >= 3 && s.final.rank >= MERCHANT_RANK },
+    { id: 'storm_born', cat: 'Mastery', name: 'Storm Born', desc: 'Finish Monsoon Level 6 as Merchant or better.', lp: 25, noEndless: true, test: (s, m, end) => end && s && s.final && s.mode !== 'endless' && s.level >= 6 && s.final.rank >= MERCHANT_RANK },
+    { id: 'master', cat: 'Mastery', name: 'Master of Monsoons', desc: 'Finish Monsoon Level 10 as Merchant or better.', lp: 50, noEndless: true, test: (s, m, end) => end && s && s.final && s.mode !== 'endless' && s.level >= 10 && s.final.rank >= MERCHANT_RANK },
+    { id: 'rival_beat', cat: 'Mastery', name: 'Upstart', desc: 'Finish a season worth more than Towkay Lim.', lp: 10, test: (s, m, end) => end && s && s.final && s.final.beatRival },
+    { id: 'rival_crush', cat: 'Mastery', name: 'Hostile Takeover', desc: 'Finish worth at least twice as much as Towkay Lim.', lp: 20, test: (s, m, end) => end && s && s.final && s.final.nw >= 2 * s.final.rivalNW },
+    { id: 'clean_sweep', cat: 'Mastery', name: 'Clean Sweep', desc: 'Complete all three bounties in one season.', lp: 15, test: s => s && s.bounties && s.bounties.length === 3 && s.bounties.every(b => b.done) },
+    { id: 'typhoon', cat: 'Voyages', name: 'Eye of the Storm', desc: 'Push through a typhoon.', lp: 10, test: s => s && s.st.typhoonPush },
+    { id: 'full_crew', cat: 'Mastery', name: 'Full Crew', desc: 'Unlock every captain.', lp: 20, test: (s, m) => CAPTAIN_IDS.every(c => !CAPTAINS[c].unlock || m.unlocks[CAPTAINS[c].unlock]) },
+    // Company and late game
+    { id: 'co_wh', cat: 'Company', name: 'Godown', desc: 'Rent your first warehouse.', lp: 5, test: s => s && s.co && Object.keys(s.co.wh).length >= 1 },
+    { id: 'co_fac', cat: 'Company', name: 'Smoke Stack', desc: 'Build a factory.', lp: 5, test: s => s && s.co && Object.keys(s.co.fac).length >= 1 },
+    { id: 'co_made', cat: 'Company', name: 'Production Line', desc: 'Make 1,000 t of products in one run.', lp: 10, test: s => s && s.co && s.co.made >= 1000, prog: s => [s && s.co ? s.co.made : 0, 1000] },
+    { id: 'co_trips', cat: 'Company', name: 'Standing Route', desc: 'Complete 10 freight trips in one run.', lp: 10, test: s => s && s.co && s.co.trips >= 10, prog: s => [s && s.co ? s.co.trips : 0, 10] },
+    { id: 'co_all4', cat: 'Company', name: 'Diversified Industries', desc: 'Own a factory for every product in one run.', lp: 20, test: s => s && s.co && Object.keys(RECIPES).every(g => Object.values(s.co.fac).some(f => f.recipe === g)), prog: s => [s && s.co ? Object.keys(RECIPES).filter(g => Object.values(s.co.fac).some(f => f.recipe === g)).length : 0, 4] },
+    { id: 'co_added', cat: 'Company', name: 'Value Added', desc: 'A single factory adds RM 1M of value.', lp: 15, test: s => s && s.co && Object.values(s.co.fac).some(f => f.added >= 1e6) },
+    { id: 'co_value', cat: 'Company', name: 'Bricks and Mortar', desc: 'Own a company worth RM 5M.', lp: 15, test: s => s && s.co && coValue(s, false) >= 5e6 },
+    { id: 'deal_1', cat: 'Company', name: 'Order Book', desc: 'Complete a big order.', lp: 10, test: s => s && s.co && s.co.dealsDone >= 1 },
+    { id: 'deal_5', cat: 'Company', name: 'Preferred Supplier', desc: 'Complete 5 big orders in one run.', lp: 20, test: s => s && s.co && s.co.dealsDone >= 5, prog: s => [s && s.co ? s.co.dealsDone : 0, 5] },
+    { id: 'deal_ship', cat: 'Company', name: "Captain's Delivery", desc: 'Finish a big order from your own hold.', lp: 10, test: s => s && s.co && s.co.dealShip >= 1 },
+    { id: 'alert_calm', cat: 'Company', name: 'Hold the Line', desc: 'Sit out 3 company troubles without paying, in one run.', lp: 10, test: s => s && s.co && s.co.waited >= 3, prog: s => [s && s.co ? s.co.waited : 0, 3] },
+    { id: 'est_1', cat: 'Company', name: 'Landowner', desc: 'Buy an estate or mine.', lp: 10, test: s => s && s.co && Object.keys(s.co.est || {}).length >= 1 },
+    { id: 'est_harvest', cat: 'Company', name: 'Harvest Moon', desc: 'Harvest 2,000 t from your estates in one run.', lp: 15, test: s => s && s.co && s.co.harvested >= 2000, prog: s => [s && s.co ? s.co.harvested : 0, 2000] },
+    { id: 'shop_1', cat: 'Company', name: 'Open for Customers', desc: 'Open a shop.', lp: 10, test: s => s && s.co && Object.keys(s.co.shop || {}).length >= 1 },
+    { id: 'shop_rep', cat: 'Company', name: 'Household Name', desc: 'Raise a shop to 140% reputation.', lp: 15, test: s => s && s.co && Object.values(s.co.shop || {}).some(sh => sh.rep >= 1.4) },
+    { id: 'shop_credit', cat: 'Company', name: 'Good Credit', desc: 'Collect RM 1M from customers on credit in one run.', lp: 15, test: s => s && s.co && Object.values(s.co.shop || {}).reduce((t, sh) => t + sh.collected, 0) >= 1e6 },
+    { id: 'mgr_1', cat: 'Company', name: 'Delegation', desc: 'Hire a branch manager.', lp: 10, test: s => s && s.co && Object.keys(s.co.mgr || {}).length >= 1 },
+    { id: 'ocean_1', cat: 'Voyages', name: 'Beyond the Chart', desc: 'Drop anchor in an ocean port.', lp: 15, test: s => s && OCEAN_PORTS.some(p => s.st.visited[p]) },
+    { id: 'ocean_all', cat: 'Voyages', name: 'Four Winds', desc: 'Visit Colombo, Mumbai, Dubai and Tokyo in one run.', lp: 25, test: s => s && OCEAN_PORTS.every(p => s.st.visited[p]), prog: s => [s ? OCEAN_PORTS.filter(p => s.st.visited[p]).length : 0, 4] },
+    { id: 'long_towkay', cat: 'Mastery', name: 'Long Haul', desc: 'Finish a 120-day season as Towkay or better.', lp: 15, test: (s, m, end) => end && s && s.final && s.mode === 'normal' && s.maxDays >= 104 && s.final.rank >= 4 },
+    { id: 'end_ch2', cat: 'Endless', name: 'Second Monsoon', desc: 'Close two chapters in Endless.', lp: 10, test: s => s && s.endless && s.endless.ch >= 3 },
+    { id: 'end_year', cat: 'Endless', name: 'A Year of Monsoons', desc: 'Reach day 360 in Endless.', lp: 20, test: s => s && s.mode === 'endless' && s.day >= 360, prog: s => [s && s.mode === 'endless' ? s.day : 0, 360] },
+    { id: 'end_lim', cat: 'Endless', name: "Lim's Last Junk", desc: 'Close 5 Endless chapters in a row ahead of Towkay Lim.', lp: 25, test: s => s && s.endless && s.endless.aheadBest >= 5, prog: s => [s && s.endless ? s.endless.aheadBest : 0, 5] },
+    { id: 'taipan', cat: 'Wealth', name: 'Taipan', desc: 'Reach RM 100M net worth.', lp: 30, test: s => s && s.st.peak >= 1e8 },
+    { id: 'prince', cat: 'Wealth', name: 'Merchant Prince', desc: 'Reach RM 250M net worth.', lp: 40, test: s => s && s.st.peak >= 2.5e8 },
   ];
+
+  const ACH_CATS = ['Trade', 'Voyages', 'Wealth', 'Company', 'Mastery', 'Endless', 'Daily'];
   function checkAch(s, meta, atEnd) {
     const got = [];
     ACH.forEach(a => {
@@ -1870,7 +2385,7 @@
     });
   }
 
-  function serialize(s) { return JSON.stringify(s); }
+  function serialize(s) { return JSON.stringify(s, (k, v) => { if (typeof v === 'number' && !Number.isFinite(v)) throw new Error('Refusing to save a non-finite number at ' + k); return v; }); }
   const saveRecord = x => x !== null && typeof x === 'object' && !Array.isArray(x);
   const saveId = x => typeof x === 'string' && /^[a-z][a-z0-9_-]*$/i.test(x);
   const saveDate = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
@@ -1891,13 +2406,21 @@
   function deserialize(str) {
     const s = parseSave(str);
     saveRequire(saveRecord(s) && s.v === 1);
-    saveRequire(['normal', 'daily'].includes(s.mode) && ['port', 'sea', 'sunk', 'ended'].includes(s.phase));
+    saveRequire(['normal', 'daily', 'endless'].includes(s.mode) && ['port', 'sea', 'sunk', 'ended'].includes(s.phase));
     saveRequire(saveHas(CAPTAINS, s.captain) && saveHas(PORTS, s.port));
     saveRequire(s.twist === null || saveHas(TWISTS, s.twist));
     saveRequire(s.mode !== 'daily' || saveDate(s.dateKey));
     saveNumbers(s, ['day', 'maxDays', 'level', 'cash', 'bank', 'along', 'alongDue', 'seq']);
-    saveRequire(Number.isInteger(s.day) && s.day >= 1 && s.maxDays >= 1 && s.level >= 0 && s.level <= 10);
-    saveRequire(s.bank >= 0 && s.along >= 0);
+    saveRequire(Number.isInteger(s.day) && s.day >= 1 && Number.isInteger(s.maxDays) && s.level >= 0 && s.level <= 10 && Number.isInteger(s.level));
+    if (s.mode === 'endless') {
+      const E = s.endless;
+      saveRequire(saveRecord(E)); saveNumbers(E, ['ch', 'start', 'baseLevel', 'nw0', 'voy0', 'lpOwed', 'lpPaid', 'ahead', 'aheadBest', 'neg', 'seen']);
+      saveRequire(Number.isInteger(E.ch) && E.ch >= 1 && E.ch <= 100000 && s.maxDays === E.start + CHAPTER_DAYS - (E.ch === 1 ? 1 : 0) && s.day <= s.maxDays);
+      saveRequire(E.lpOwed >= 0 && E.lpOwed <= 1000 && typeof E.bankrupt === 'boolean' && Array.isArray(E.reports) && E.reports.length <= 8);
+      E.reports.forEach(r => { saveNumbers(r, ['ch', 'from', 'to', 'nw0', 'nw', 'rival', 'bounties', 'lp', 'voyages', 'level']); saveRequire(typeof r.beat === 'boolean' && (r.twist === null || saveHas(TWISTS, r.twist))); });
+      saveRequire(saveRecord(s.rival) && Number.isFinite(s.rival.base) && Number.isFinite(s.rival.luck));
+    } else saveRequire(VALID_DAYS.includes(s.maxDays) && s.day <= s.maxDays + 8 && s.endless === undefined);
+    saveRequire(s.bank >= 0 && s.along >= 0 && Math.abs(s.cash) <= 1e13 && s.bank <= 1e13 && s.along <= 1e13);
     [s.rngW, s.rngL].forEach(r => saveRequire(Array.isArray(r) && r.length === 4 && r.every(Number.isInteger)));
     [[s.ports, PORTS], [s.goods, GOODS]].forEach(([ids, table]) => {
       saveRequire(Array.isArray(ids) && ids.length > 0 && ids.every(id => saveHas(table, id)) && new Set(ids).size === ids.length);
@@ -1999,41 +2522,7 @@
       s.ports.forEach(p => { s.mk[p][g] = { L: 0, I: 0 }; });
     });
     if (s.co == null) s.co = newCo();
-    const co = s.co;
-    saveRequire(saveRecord(co) && saveRecord(co.wh) && saveRecord(co.fac) && Array.isArray(co.routes));
-    saveNumbers(co, ['reserve', 'seq', 'made', 'trips', 'autoBought', 'autoSold', 'upkeep', 'built']);
-    saveRequire(co.reserve >= 0 && co.routes.length <= CO.routeMax);
-    saveRequire(Object.values(co.wh).every(saveRecord) && Object.values(co.fac).every(saveRecord) && co.routes.every(saveRecord));
-    coFill(co);
-    saveNumbers(co, ['nextDeal', 'dealsDone', 'nextAlert']);
-    saveRequire(saveRecord(co.rep) && Array.isArray(co.rep.notes) && co.rep.notes.length <= 8 && co.rep.notes.every(n => typeof n === 'string'));
-    saveNumbers(co.rep, ['from', 'bought', 'sold', 'profit', 'made', 'shipped', 'delivered', 'upkeep', 'fees', 'freight']);
-    const dealOk = d => { saveRequire(saveRecord(d) && saveHas(RECIPES, d.g) && s.goods.includes(d.g) && s.ports.includes(d.port)); saveNumbers(d, ['id', 'qty', 'got', 'deadline', 'unit', 'bonus', 'paid', 'expires']); saveRequire(d.qty > 0 && d.got >= 0 && d.got < d.qty); };
-    saveRequire(Array.isArray(co.deals) && co.deals.length <= 2); co.deals.forEach(dealOk);
-    if (co.dealOffer !== null) dealOk(co.dealOffer);
-    saveRequire(Array.isArray(co.alerts) && co.alerts.length <= 12);
-    co.alerts.forEach(a => {
-      saveRequire(saveRecord(a) && ['strike', 'breakdown', 'boom'].includes(a.kind) && typeof a.text === 'string' && Array.isArray(a.choices) && a.choices.length <= 2 && (a.choice === null || typeof a.choice === 'string'));
-      saveRequire(a.p === null || s.ports.includes(a.p)); saveRequire(a.g === null || s.goods.includes(a.g));
-      saveNumbers(a, ['id', 'day', 'end', 'cost']);
-      a.choices.forEach(c => { saveRequire(saveRecord(c) && typeof c.id === 'string' && typeof c.label === 'string'); saveNumbers(c, ['cost']); });
-    });
-    Object.values(co.wh).forEach(w => { saveRequire(saveRecord(w.pl)); saveNumbers(w.pl, ['bought', 'sold', 'profit', 'upkeep']); });
-    Object.values(co.fac).forEach(f => saveNumbers(f, ['added', 'upkeep', 'downUntil', 'otUntil']));
-    co.routes.forEach(r => saveNumbers(r, ['sold', 'profit', 'freight']));
-    Object.keys(co.wh).forEach(p => {
-      const w = co.wh[p];
-      saveRequire(s.ports.includes(p) && saveRecord(w) && Number.isInteger(w.lvl) && w.lvl >= 1 && w.lvl <= CO.whMaxLvl && Number.isFinite(w.invest) && saveRecord(w.stock) && Array.isArray(w.orders) && w.orders.length <= CO.orderMax);
-      Object.keys(w.stock).forEach(g => { saveRequire(s.goods.includes(g)); saveNumbers(w.stock[g], ['q', 'cost']); saveRequire(w.stock[g].q > 0 && w.stock[g].cost >= 0); });
-      saveRequire(whUsed(w) <= whCap(w) + 1e-6);
-      w.orders.forEach(o => { saveRequire(saveRecord(o) && ORDER_MODES[o.kind] && ORDER_MODES[o.kind].includes(o.mode) && s.goods.includes(o.g)); saveNumbers(o, ['id', 'qty', 'done']); });
-    });
-    Object.keys(co.fac).forEach(p => { const f = co.fac[p]; saveRequire(co.wh[p] && saveRecord(f) && saveHas(RECIPES, f.recipe) && Number.isInteger(f.lvl) && f.lvl >= 1 && f.lvl <= CO.facMaxLvl); saveNumbers(f, ['made', 'invest']); });
-    co.routes.forEach(r => {
-      saveRequire(saveRecord(r) && co.wh[r.from] && s.ports.includes(r.to) && r.from !== r.to && ['wh', 'mkt'].includes(r.dest) && s.goods.includes(r.g) && typeof r.paused === 'boolean');
-      saveNumbers(r, ['id', 'qty', 'trips']);
-      if (r.trip != null) { saveNumbers(r.trip, ['q', 'unit', 'depart', 'arrive']); saveRequire(r.trip.q > 0); }
-    });
+    validateCo(s);
     if (s.bounties == null) s.bounties = [];
     saveRequire(Array.isArray(s.bounties) && s.bounties.length <= 3);
     s.bounties.forEach(b => saveRequire(saveRecord(b) && saveHas(BOUNTY_LP, b.type) && typeof b.text === 'string' && saveRecord(b.p) && Number.isFinite(b.lp)));
@@ -2041,11 +2530,15 @@
   function deserializeMeta(str) {
     const m = parseSave(str), b = newMeta();
     saveRequire(saveRecord(m) && (m.v === undefined || m.v === 1) && saveRecord(m.stats));
-    ['settings', 'stats', 'daily', 'unlocks', 'ach', 'tips'].forEach(k => {
+    ['settings', 'stats', 'daily', 'unlocks', 'ach', 'tips', 'endless'].forEach(k => {
       saveRequire(m[k] === undefined || saveRecord(m[k]));
     });
     const out = Object.assign({}, b, m);
-    ['settings', 'stats', 'daily'].forEach(k => { out[k] = Object.assign({}, b[k], m[k] || {}); });
+    ['settings', 'stats', 'daily', 'endless'].forEach(k => { out[k] = Object.assign({}, b[k], m[k] || {}); });
+    saveNumbers(out.endless, ['runs', 'best', 'bestDay', 'chapters']);
+    saveRequire(Array.isArray(out.endless.hall) && out.endless.hall.length <= 5);
+    out.endless.hall.forEach(h => { saveNumbers(h, ['t', 'nw', 'day', 'ch']); saveRequire(saveHas(CAPTAINS, h.captain)); });
+    saveNumbers(out.daily, ['total']);
     saveNumbers(out, ['lp', 'lpTotal', 'levelMax']);
     saveRequire(out.lp >= 0 && out.lpTotal >= 0 && Number.isInteger(out.levelMax) && out.levelMax >= 0 && out.levelMax <= 10);
     Object.keys(b.settings).forEach(k => saveRequire(typeof out.settings[k] === 'boolean'));
@@ -2062,13 +2555,13 @@
     out.history.forEach(h => {
       saveNumbers(h, ['t', 'level', 'nw', 'rank']);
       saveRequire(saveHas(CAPTAINS, h.captain) && Number.isInteger(h.rank) && h.rank >= 0 && h.rank < RANKS.length);
-      saveRequire(['normal', 'daily'].includes(h.mode) && (h.mode !== 'daily' || saveDate(h.date)));
+      saveRequire(['normal', 'daily', 'endless'].includes(h.mode) && (h.mode !== 'daily' || saveDate(h.date)));
     });
     return out;
   }
 
   const MM = {
-    VERSION, RIVAL, BOUNTY_LP, checkBounties, rivalFinal, PORTS, PORT_IDS, GOODS, GOOD_IDS, PF, SHIPS, SHIP_IDS, UPGRADES, CAPTAINS, CAPTAIN_IDS, UNLOCKS, UNLOCK_BY_ID, LEVELS, RANKS, TWISTS, ACH, NODES, EDGES, REGION_NAMES, MERCHANT_RANK,
+    VERSION, RIVAL, BOUNTY_LP, ACH_CATS, checkBounties, rivalFinal, PORTS, PORT_IDS, GOODS, GOOD_IDS, PF, SHIPS, SHIP_IDS, UPGRADES, CAPTAINS, CAPTAIN_IDS, UNLOCKS, UNLOCK_BY_ID, LEVELS, RANKS, TWISTS, ACH, NODES, EDGES, REGION_NAMES, MERCHANT_RANK,
     rm, price, tons, clamp,
     newMeta, newRun, route, planVoyage, startVoyage, stepVoyage, resolve, progress, phaseOn,
     quoteBuy, quoteSell, maxBuy, buy, sell, buyPrice, sellPrice, mid, baseMid, spreadOf, activeEvents, depthT,
@@ -2078,7 +2571,8 @@
     waitDay, endSeason, rankFor, seasonLP, checkAch, unlock, dayKeyShift,
     knownSell, bestKnownSell, bestKnownBuy, marketRows, portProfile, newsFeed, upcomingDeadlines, cargoRows,
     serialize, deserialize, deserializeMeta, canAct,
-    SEASON_DAYS, levelGoal, niceGoal, acceptDeal, declineDeal, coChoose, strikeAt, alertOpen, repActive, takeCoReport, STAGES, CO, RECIPES, ORDER_MODES, coStage, nextStage, whUsed, whCap, whFree, buildWarehouse, upgradeWarehouse, storeCargo, takeCargo, setOrder, removeOrder,
+    SEASON_DAYS, CHAPTER_DAYS, collectEndlessLP, OCEAN_PORTS, STAGE, ESTATES, SHOP_DEMAND, SHOP_TIERS, SHOP_TERMS, MGR_STYLES, estateGoods, estateYield, buildEstate, upgradeEstate, openShop, upgradeShop, setShop, shopRecv, shopDemand, hireManager, setManager, fireManager, routeMax, mineQty,
+    levelGoal, niceGoal, acceptDeal, declineDeal, coChoose, strikeAt, alertOpen, repActive, takeCoReport, STAGES, CO, RECIPES, ORDER_MODES, coStage, nextStage, whUsed, whCap, whFree, buildWarehouse, upgradeWarehouse, storeCargo, takeCargo, setOrder, removeOrder,
     buildFactory, upgradeFactory, addRoute, removeRoute, pauseRoute, setReserve, routeQuote, freightDays, coValue, coDaily, coSummary, vsAvg, quoteBuyAt, quoteSellAt,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = MM;

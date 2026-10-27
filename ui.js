@@ -1,13 +1,15 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '2.2.0';
+  const APP_VERSION = '2.3.0';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
 
   /* ================= Storage ================= */
-  const KEYS = { meta: 'mm.meta.v1', normal: 'mm.run.normal.v1', daily: 'mm.run.daily.v1' };
+  const KEYS = { meta: 'mm.meta.v1', normal: 'mm.run.normal.v1', daily: 'mm.run.daily.v1', endless: 'mm.run.endless.v1' };
+  const SLOTS = ['normal', 'daily', 'endless'];
+  let metaLocked = false;
   let storageWarning = false;
   function savingFailed() {
     if (!storageWarning) toast('Progress could not be saved. Keep this tab open and copy a backup from the menu.', 'bad');
@@ -16,19 +18,31 @@
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { savingFailed(); return false; } }
   function lsDel(k) { try { localStorage.removeItem(k); return true; } catch (e) { savingFailed(); return false; } }
-  function loadMeta() { const raw = lsGet(KEYS.meta); if (raw) { try { return MM.deserializeMeta(raw); } catch (e) { /* fall through */ } } return MM.newMeta(); }
-  function saveMeta() { return lsSet(KEYS.meta, JSON.stringify(meta)); }
+  // Unreadable data (for example written by a newer version) is kept aside, never silently overwritten.
+  function quarantine(key, raw) { try { if (localStorage.getItem(key + '.unreadable') === null) localStorage.setItem(key + '.unreadable', raw); } catch (e) { /* storage unavailable */ } }
+  function loadMeta() {
+    const raw = lsGet(KEYS.meta);
+    if (raw) { try { return MM.deserializeMeta(raw); } catch (e) { quarantine(KEYS.meta, raw); metaLocked = true; } }
+    return MM.newMeta();
+  }
+  function saveMeta() { if (metaLocked) return false; return lsSet(KEYS.meta, JSON.stringify(meta)); }
   function loadSlot(slot) {
     const raw = lsGet(KEYS[slot]); if (!raw) return null;
-    try { const s = MM.deserialize(raw); return s.phase === 'ended' ? null : s; } catch (e) { return null; }
+    try { const s = MM.deserialize(raw); return s.phase === 'ended' ? null : s; } catch (e) { quarantine(KEYS[slot], raw); return null; }
   }
-  function saveRun() { if (!run || !UI.slot) return true; return run.phase === 'ended' ? lsDel(KEYS[UI.slot]) : lsSet(KEYS[UI.slot], MM.serialize(run)); }
+  function saveRun() {
+    if (!run || !UI.slot) return true;
+    if (run.phase === 'ended') return lsDel(KEYS[UI.slot]);
+    let raw;
+    try { raw = MM.serialize(run); } catch (e) { savingFailed(); return false; }
+    return lsSet(KEYS[UI.slot], raw);
+  }
 
   function restoreBackup(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid backup');
     const nextMeta = MM.deserializeMeta(JSON.stringify(data.meta));
     const values = [[KEYS.meta, JSON.stringify(nextMeta)]];
-    ['normal', 'daily'].forEach(slot => {
+    SLOTS.forEach(slot => {
       const raw = data[slot];
       if (raw !== null && raw !== undefined) {
         const saved = MM.deserialize(raw);
@@ -64,7 +78,7 @@
   let run = null;
   const UI = {
     screen: 'title', slot: null, tab: 'market', sheet: null, modal: null,
-    setup: { captain: 'rahim', level: 0, days: +(lsGet('mm.setup.days') || 0) || MM.SEASON_DAYS[0] }, lastCash: null, final: null, endRun: null,
+    setup: { captain: 'rahim', level: 0, days: (() => { const v = lsGet('mm.setup.days'); return v === 'endless' ? 'endless' : MM.SEASON_DAYS.indexOf(+v) >= 0 ? +v : MM.SEASON_DAYS[0]; })() }, lastCash: null, final: null, endRun: null,
     sea: { timer: null, raf: null, fast: false, frac: 0 }, seenNews: 0, installEvt: null, swWaiting: null,
     scroll: {}, legacyCat: 'Captains', importOpen: false, widgets: [], owidgets: [], seaScene: null, seaMap: null,
   };
@@ -108,6 +122,12 @@
     if (live.length > 3) live.filter(t => t !== el).sort((a, b) => (a.classList.contains('ach') ? 1 : 0) - (b.classList.contains('ach') ? 1 : 0)).slice(0, live.length - 3).forEach(t => { t.classList.add('out'); setTimeout(() => t.remove(), 300); });
     setTimeout(() => el.classList.add('out'), 2600);
     setTimeout(() => el.remove(), 3100);
+  }
+  // Several achievements at once share one toast so they never bury a decision.
+  function achToast(list) {
+    if (!list.length) return;
+    if (list.length === 1) toast('Achievement: ' + list[0].name + ' · +' + list[0].lp + ' Legacy', 'ach');
+    else toast(list.length + ' achievements: ' + list.map(a => a.name).join(', ') + ' · +' + list.reduce((n, a) => n + a.lp, 0) + ' Legacy', 'ach');
   }
   function floatText(text, good) {
     const host = root;
@@ -190,13 +210,14 @@
     const rv = s.rival ? s.rival.nw : 0, ahead = nw >= rv;
     return '<header class="hud">' +
       '<div class="hud-r1"><button class="menu-btn" data-a="menu" aria-label="Menu">' + I.menu + '</button><div class="loc">' + (s.phase === 'sea' ? I.ship : I.anchor) + '<span>' + esc(loc) + '</span></div>' + windChip(s) +
-      '<button class="day" data-a="season-info"><span>Day <b>' + s.day + '</b>/' + s.maxDays + '</span><i style="width:' + Math.min(100, (s.day / s.maxDays) * 100).toFixed(0) + '%"></i></button></div>' +
+      (s.mode === 'endless' ? '<button class="day endless" data-a="season-info"><span>Day <b>' + s.day + '</b></span><small>Ch ' + s.endless.ch + '</small><i style="width:' + Math.min(100, ((s.day - s.endless.start) / MM.CHAPTER_DAYS) * 100).toFixed(0) + '%"></i></button></div>'
+        : '<button class="day" data-a="season-info"><span>Day <b>' + s.day + '</b>/' + s.maxDays + '</span><i style="width:' + Math.min(100, (s.day / s.maxDays) * 100).toFixed(0) + '%"></i></button></div>') +
       '<div class="hud-r2">' +
       '<div class="stat cash">' + I.coins + '<div><small>Cash</small><b id="hudCash" class="' + (s.cash < 0 ? 'neg' : '') + '">' + rm(s.cash) + '</b></div></div>' +
       '<div class="stat">' + I.box + '<div><small>Hold</small><b>' + num(used) + '<span class="dim">/' + num(cap) + '</span></b></div></div>' +
       '<div class="stat worth">' + I.chart + '<div><small>Worth</small><b>' + rm(nw) + '</b></div>' + (debt > 0 ? '<span class="debt-badge">owes ' + rm(debt).replace('RM ', '') + '</span>' : '') + '</div>' +
       '</div>' +
-      (s.rival ? '<button class="rivalbar ' + (ahead ? 'ahead' : 'behind') + '" data-a="rival-info">' + captAvatar('lim', 22) + '<span>' + esc(MM.RIVAL.name) + ' <b>' + rm(rv) + '</b></span><em>' + (ahead ? 'You lead by ' + rm(nw - rv) : 'Behind by ' + rm(rv - nw)) + '</em></button>' : '') +
+      (s.rival ? '<button class="rivalbar ' + (ahead ? 'ahead' : 'behind') + '" data-a="rival-info">' + captAvatar('lim', 22) + '<span>' + (MM.RIVAL.name.indexOf(' ') > 0 ? '<i class="rv-t">' + esc(MM.RIVAL.name.slice(0, MM.RIVAL.name.lastIndexOf(' ') + 1)) + '</i>' + esc(MM.RIVAL.name.slice(MM.RIVAL.name.lastIndexOf(' ') + 1)) : esc(MM.RIVAL.name)) + ' <b>' + rm(rv) + '</b></span><em>' + (ahead ? 'You lead by ' + rm(nw - rv) : 'Behind by ' + rm(rv - nw)) + '</em></button>' : '') +
       '</header>';
   }
   function tabs() {
@@ -214,7 +235,7 @@
 
 
   /* ================= Company tab ================= */
-  const STAGE_ICON = ['ship', 'warehouse', 'factory', 'route'];
+  const STAGE_ICON = ['ship', 'warehouse', 'factory', 'route', 'estate', 'shop', 'manager', 'ocean'];
   const isProduct = g => !!MM.GOODS[g].product;
   function goodsShown(s) { const k = MM.coStage(s); return s.goods.filter(g => !isProduct(g) || k >= 2); }
   function coMapOpts(s) {
@@ -251,16 +272,56 @@
       h += '<div class="facline">' + I.factory + '<span><b>' + esc(R.name) + (f.lvl > 1 ? ' · level 2' : '') + '</b><small>' + Object.keys(R.input).map(g => R.input[g] + ' ' + gName(g).toLowerCase()).join(' + ') + ' » ' + R.out + ' t ' + gName(f.recipe).toLowerCase() + ' · up to ' + R.batches * f.lvl * R.out + ' t a day</small><small class="' + (/Made/.test(f.note) ? 'pos' : 'warn') + '">' + esc(f.note || 'Starts tomorrow') + ' · made ' + num(f.made) + ' t</small>' + (f.made ? '<small>' + plLine('Value added', f.added - f.upkeep) + '</small>' : '') + '</span>' +
         (f.lvl < MM.CO.facMaxLvl ? '<button class="btn xs" data-a="fac-up" data-p="' + p + '"' + (s.cash < MM.CO.facUpCost || !MM.canAct(s) ? ' disabled' : '') + '>×2 · ' + rm(MM.CO.facUpCost) + '</button>' : '') + '</div>';
     }
+    h += estateLine(s, p) + shopBlock(s, p) + managerLine(s, p);
     h += '<ul class="orders">' + w.orders.map(o => '<li class="' + o.kind + '">' + (o.kind === 'buy' ? I.down : I.up) + '<span>' + esc(orderLabel(o)) + '<small>' + num(o.done) + ' t so far</small></span><button class="icon-btn sm" data-a="order-del" data-p="' + p + '" data-id="' + o.id + '" aria-label="Remove order">' + I.close + '</button></li>').join('') + '</ul>';
     if (w.orders.length < MM.CO.orderMax) h += '<button class="btn sm ghost" data-a="order-new" data-p="' + p + '">' + I.plus + '<span>Standing order</span></button>';
     return h + '</section>';
+  }
+  function estateLine(s, p) {
+    const e = (s.co.est || {})[p]; if (!e) return '';
+    const E = MM.ESTATES[e.g];
+    return '<div class="facline">' + I.estate + '<span><b>' + esc(E.name) + (e.lvl > 1 ? ' · level 2' : '') + '</b><small>About ' + num(MM.estateYield(s, e)) + ' t ' + esc(gName(e.g).toLowerCase()) + ' a day' + (E.season ? ', best in the ' + E.season + ' monsoon' : '') + ' · harvest costs ' + num(MM.GOODS[e.g].base * MM.CO.harvestCost) + '/t</small><small class="' + (/Harvested/.test(e.note) ? 'pos' : 'warn') + '">' + esc(e.note || 'First harvest tomorrow') + ' · ' + num(e.made) + ' t so far</small>' + (e.made ? '<small>' + plLine('Value added', e.added - e.upkeep) + '</small>' : '') + '</span>' +
+      (e.lvl < MM.CO.estMaxLvl ? '<button class="btn xs" data-a="est-up" data-p="' + p + '"' + (s.cash < MM.CO.estUpCost || !MM.canAct(s) ? ' disabled' : '') + '>×2 · ' + rm(MM.CO.estUpCost) + '</button>' : '') + '</div>';
+  }
+  function shopBlock(s, p) {
+    const sh = (s.co.shop || {})[p]; if (!sh) return '';
+    const recv = MM.shopRecv(sh);
+    let h = '<div class="shopbox"><div class="facline">' + I.shop + '<span><b>Shop' + (sh.lvl > 1 ? ' · level 2' : '') + '</b><small>' + esc(sh.note || 'Opens tomorrow') + '</small><small>Reputation ' + Math.round(sh.rep * 100) + '% · sales ' + rm(sh.sold) + (recv ? ' · owed to you ' + rm(recv) : '') + (sh.bad ? ' · bad debts ' + rm(sh.bad) : '') + '</small>' + (sh.sold ? '<small>' + plLine('Profit', sh.profit - sh.upkeep) + '</small>' : '') + '</span>' +
+      (sh.lvl < MM.CO.shopMaxLvl ? '<button class="btn xs" data-a="shop-up" data-p="' + p + '"' + (s.cash < MM.CO.shopUpCost || !MM.canAct(s) ? ' disabled' : '') + '>×2 · ' + rm(MM.CO.shopUpCost) + '</button>' : '') + '</div>';
+    h += '<div class="chips pick">' + Object.keys(MM.SHOP_TIERS).map(t => '<button class="chip-btn ' + (sh.tier === t ? 'on' : '') + '" data-a="shop-tier" data-p="' + p + '" data-v="' + t + '">' + esc(MM.SHOP_TIERS[t].name) + ' ' + (MM.SHOP_TIERS[t].price > 1 ? '+' + Math.round((MM.SHOP_TIERS[t].price - 1) * 100) + '%' : 'price') + '</button>').join('') + '</div>';
+    h += '<div class="chips pick">' + Object.keys(MM.SHOP_TERMS).map(t => '<button class="chip-btn ' + (sh.terms === t ? 'on' : '') + '" data-a="shop-terms" data-p="' + p + '" data-v="' + t + '">' + esc(MM.SHOP_TERMS[t].name) + '</button>').join('') + '</div>';
+    h += '<p class="small dim">Sells only goods you made, grew or shipped in. Credit brings 40% more customers, pays in ' + MM.CO.creditDays + ' days, and a few customers never pay.</p></div>';
+    return h;
+  }
+  function managerLine(s, p) {
+    const m = (s.co.mgr || {})[p]; if (!m) return '';
+    const M = MM.MGR_STYLES[m.style];
+    return '<div class="shopbox"><div class="facline">' + I.manager + '<span><b>' + esc(M.name) + ' manager</b><small>' + esc(M.desc) + '</small><small>Wage ' + rm(M.wage) + ' a day · bought ' + rm(m.bought) + ' · sold ' + rm(m.sold) + ' · ' + plural(m.decided, 'decision') + '</small></span>' +
+      '<button class="icon-btn sm" data-a="mgr-fire" data-p="' + p + '" aria-label="Let the manager go">' + I.close + '</button></div>' +
+      '<div class="chips pick">' + Object.keys(MM.MGR_STYLES).map(k => '<button class="chip-btn ' + (m.style === k ? 'on' : '') + '" data-a="mgr-style" data-p="' + p + '" data-v="' + k + '">' + esc(MM.MGR_STYLES[k].name) + '</button>').join('') + '</div></div>';
+  }
+  function hereActions(s) {
+    const co = s.co, k = MM.coStage(s), p = s.port, S = MM.STAGE;
+    if (s.phase !== 'port') return '';
+    const here = co.wh[p], out = [];
+    const btn = (a, icon, label, cost, extra) => '<button class="btn ' + (out.length ? 'ghost' : 'primary') + '" data-a="' + a + '"' + (cost && s.cash < cost ? ' disabled' : '') + '>' + icon + '<span>' + label + '</span></button>' + (extra ? '<p class="small dim">' + extra + '</p>' : '');
+    if (!here) out.push(btn('wh-build', I.warehouse, 'Rent a warehouse in ' + esc(pShort(p)) + ' · ' + rm(MM.CO.whCost), MM.CO.whCost, num(MM.CO.whCap) + ' t of storage, ' + rm(MM.CO.whUpkeep) + ' a day.'));
+    else {
+      if (k >= S.factory && !co.fac[p]) out.push(btn('fac-sheet', I.factory, 'Build a factory', 0));
+      if (k >= S.estate && !(co.est || {})[p] && MM.estateGoods(s, p).length) out.push(btn('est-sheet', I.estate, 'Buy an estate · ' + rm(MM.CO.estCost), MM.CO.estCost, 'Grows ' + MM.estateGoods(s, p).map(g => gName(g).toLowerCase()).join(' or ') + ' here, straight into your warehouse.'));
+      if (k >= S.shop && !(co.shop || {})[p]) out.push(btn('shop-open', I.shop, 'Open a shop · ' + rm(MM.CO.shopCost), MM.CO.shopCost, 'Sells your products to steady customers, ' + rm(MM.CO.shopUpkeep) + ' a day.'));
+      if (k >= S.manager && !(co.mgr || {})[p]) out.push(btn('mgr-sheet', I.manager, 'Hire a branch manager · ' + rm(MM.CO.mgrFee), MM.CO.mgrFee));
+    }
+    const nx = MM.nextStage(s);
+    if (!out.length && !nx) return '';
+    return '<section class="here"><h3 class="sec">Here in ' + esc(pName(p)) + '</h3>' + (out.length ? out.join('') : '<p class="small dim">Everything you can build here is built. ' + (nx ? esc(nx.name) + ' unlock at ' + rm(nx.at) + '.' : '') + '</p>') + '</section>';
   }
   function plLine(label, v) { return '<span class="pl ' + (v >= 0 ? 'pos' : 'neg') + '">' + label + ' ' + (v < 0 ? '−' : '') + rm(Math.abs(v)) + '</span>'; }
   function alertCards(s) {
     const open = s.co.alerts.filter(a => MM.alertOpen(s, a));
     if (!open.length) return '';
     return '<section><h3 class="sec">Needs you</h3>' + open.map(a => '<div class="alert-card ' + a.kind + '">' + (a.kind === 'boom' ? I.up : a.kind === 'breakdown' ? I.factory : I.warehouse) + '<div><p>' + esc(a.text) + '</p>' +
-      '<div class="row-actions">' + a.choices.map((c, i) => '<button class="btn sm ' + (i === 0 ? 'primary' : 'ghost') + '" data-a="co-choose" data-id="' + a.id + '" data-c="' + c.id + '"' + (c.cost && s.cash < c.cost ? ' disabled' : '') + '>' + esc(c.label) + '</button>').join('') + '</div></div></div>').join('') + '</section>';
+      '<div class="row-actions">' + a.choices.map((c, i) => '<button class="btn sm ' + (i === 0 ? 'primary' : 'ghost') + '" data-a="co-choose" data-id="' + esc(String(a.id)) + '" data-c="' + esc(c.id) + '"' + (c.cost && s.cash < c.cost ? ' disabled' : '') + '>' + esc(c.label) + '</button>').join('') + '</div></div></div>').join('') + '</section>';
   }
   function dealLine(s, d, offer) {
     const cap = MM.RECIPES[d.g].batches * MM.RECIPES[d.g].out;
@@ -288,29 +349,33 @@
   function tabCompany() {
     const s = run, co = s.co, k = MM.coStage(s);
     if ((co.seenStage || 0) < k) co.seenStage = k;
-    let h = tip('company') + stageCard(s);
-    if (k === 0) return h + '<section class="muted-box">' + I.company + '<p>Trade your way to ' + rm(MM.STAGES[1].at) + ' net worth to open your first warehouse. Then factories and freight follow, and your company starts earning while you sail.</p></section>';
-    h += '<section class="co-sum"><div><small>Company value</small><b>' + rm(MM.coValue(s, false)) + '</b></div><div><small>Upkeep a day</small><b>' + rm(MM.coDaily(s)) + '</b></div><div><small>Made</small><b>' + num(co.made) + ' t</b></div></section>';
-    h += alertCards(s) + dealCards(s) + reportCard(s.co.rep, 'Since day ' + s.co.rep.from, false);
-    h += '<section><h3 class="sec">Cash reserve <small>automation never spends below it</small></h3><div class="seg reserve">' + [0, 20000, 50000, 100000, 250000].map(v => '<button class="' + (co.reserve === v ? 'on' : '') + '" data-a="reserve" data-v="' + v + '">' + (v ? rm(v).replace('RM ', '') : 'None') + '</button>').join('') + '</div></section>';
-    // here
-    if (s.phase === 'port') {
-      const here = co.wh[s.port];
-      let a = '';
-      if (!here) a = '<button class="btn primary" data-a="wh-build"' + (s.cash < MM.CO.whCost ? ' disabled' : '') + '>' + I.warehouse + '<span>Rent a warehouse in ' + esc(pShort(s.port)) + ' · ' + rm(MM.CO.whCost) + '</span></button><p class="small dim">' + num(MM.CO.whCap) + ' t of storage, ' + rm(MM.CO.whUpkeep) + ' a day.</p>';
-      else if (k >= 2 && !co.fac[s.port]) a = '<button class="btn primary" data-a="fac-sheet">' + I.factory + '<span>Build a factory in ' + esc(pShort(s.port)) + '</span></button>';
-      else if (k < 2 && !co.fac[s.port]) a = '<p class="small dim">Factories unlock at ' + rm(MM.STAGES[2].at) + '.</p>';
-      if (a) h += '<section class="here"><h3 class="sec">Here in ' + esc(pName(s.port)) + '</h3>' + a + '</section>';
-    }
+    let h = tip('company');
+    if (k === 0) return h + stageCard(s) + '<section class="muted-box">' + I.company + '<p>Trade your way to ' + rm(MM.STAGES[1].at) + ' net worth to open your first warehouse. Then factories, freight, estates, shops and managers follow, and your company earns while you sail.</p></section>';
+    const tabs = [['overview', 'Overview'], ['sites', 'Sites'], ['freight', 'Freight']];
+    if (!tabs.some(t => t[0] === UI.coTab)) UI.coTab = 'overview';
+    const need = co.alerts.filter(a => MM.alertOpen(s, a)).length + (co.dealOffer ? 1 : 0);
+    h += '<div class="seg co-tabs" role="tablist">' + tabs.map(([id, label]) => '<button role="tab" class="' + (UI.coTab === id ? 'on' : '') + '" aria-selected="' + (UI.coTab === id) + '" data-a="co-tab" data-id="' + id + '">' + label + (id === 'overview' && need ? ' <i class="cnt">' + need + '</i>' : '') + '</button>').join('') + '</div>';
     const ports = Object.keys(co.wh);
-    h += '<section><h3 class="sec">Warehouses <small>' + ports.length + '</small></h3>' + (ports.length ? ports.map(p => whCard(s, p)).join('') : '<p class="empty">No warehouses yet. Sail to a port where you buy often and rent one there.</p>') + '</section>';
-    if (k >= 3) {
-      h += '<section><h3 class="sec">Freight routes <small>' + co.routes.length + '/' + MM.CO.routeMax + '</small></h3>';
-      h += co.routes.map(r => { const q = MM.routeQuote(s, r.from, r.to, r.qty); return '<div class="route-row ' + (r.trip ? 'moving' : '') + '">' + I.route + '<span><b>' + esc(pShort(r.from)) + ' » ' + esc(pShort(r.to)) + ' · ' + num(r.qty) + ' t ' + esc(gName(r.g).toLowerCase()) + '</b><small>' + (r.dest === 'wh' ? 'To your warehouse' : 'Sell at market') + ' · ' + plural(q.days, 'day') + ' · ' + rm(q.cost) + ' a trip · ' + plural(r.trips, 'trip') + ' done</small><small>' + esc(routeStatus(s, r)) + '</small>' + (r.trips ? '<small>' + plLine('Profit', r.profit) + '</small>' : '') + '</span>' +
-        '<button class="btn xs" data-a="route-pause" data-id="' + r.id + '">' + (r.paused ? 'Resume' : 'Pause') + '</button><button class="icon-btn sm" data-a="route-del" data-id="' + r.id + '" aria-label="Remove route"' + (r.trip ? ' disabled' : '') + '>' + I.close + '</button></div>'; }).join('');
-      if (co.routes.length < MM.CO.routeMax) h += '<button class="btn sm ghost" data-a="route-new"' + (ports.length ? '' : ' disabled') + '>' + I.plus + '<span>New freight route</span></button>';
-      h += '</section>';
-    } else h += '<p class="small dim center-note">Freight routes unlock at ' + rm(MM.STAGES[3].at) + '.</p>';
+    if (UI.coTab === 'overview') {
+      h += alertCards(s) + dealCards(s);
+      h += '<section class="co-sum"><div><small>Company value</small><b>' + rm(MM.coValue(s, false)) + '</b></div><div><small>Running costs a day</small><b>' + rm(MM.coDaily(s)) + '</b></div><div><small>Made and grown</small><b>' + num(co.made + (co.harvested || 0)) + ' t</b></div></section>';
+      h += reportCard(co.rep, 'Since day ' + co.rep.from, false) + stageCard(s);
+      h += '<section><h3 class="sec">Cash reserve <small>automation never spends below it</small></h3><div class="seg reserve">' + [0, 20000, 50000, 100000, 250000].map(v => '<button class="' + (co.reserve === v ? 'on' : '') + '" data-a="reserve" data-v="' + v + '">' + (v ? rm(v).replace('RM ', '') : 'None') + '</button>').join('') + '</div></section>';
+      h += hereActions(s);
+    } else if (UI.coTab === 'sites') {
+      h += hereActions(s);
+      h += '<section><h3 class="sec">Your ports <small>' + ports.length + '</small></h3>' + (ports.length ? ports.map(p => whCard(s, p)).join('') : '<p class="empty">No warehouses yet. Sail to a port where you buy often and rent one there.</p>') + '</section>';
+    } else {
+      if (k >= MM.STAGE.freight) {
+        const max = MM.routeMax(s);
+        h += '<section><h3 class="sec">Freight routes <small>' + co.routes.length + '/' + max + '</small></h3>';
+        h += co.routes.map(r => { const q = MM.routeQuote(s, r.from, r.to, r.qty); return '<div class="route-row ' + (r.trip ? 'moving' : '') + '">' + I.route + '<span><b>' + esc(pShort(r.from)) + ' » ' + esc(pShort(r.to)) + ' · ' + num(r.qty) + ' t ' + esc(gName(r.g).toLowerCase()) + '</b><small>' + (r.dest === 'wh' ? 'To your warehouse' : 'Sell at market') + ' · ' + plural(q.days, 'day') + ' · ' + rm(q.cost) + ' a trip · ' + plural(r.trips, 'trip') + ' done</small><small>' + esc(routeStatus(s, r)) + '</small>' + (r.trips ? '<small>' + plLine('Profit', r.profit) + '</small>' : '') + '</span>' +
+          '<button class="btn xs" data-a="route-pause" data-id="' + r.id + '">' + (r.paused ? 'Resume' : 'Pause') + '</button><button class="icon-btn sm" data-a="route-del" data-id="' + r.id + '" aria-label="Remove route"' + (r.trip ? ' disabled' : '') + '>' + I.close + '</button></div>'; }).join('');
+        if (co.routes.length < max) h += '<button class="btn sm ghost" data-a="route-new"' + (ports.length ? '' : ' disabled') + '>' + I.plus + '<span>New freight route</span></button>';
+        h += '</section>';
+        h += k >= MM.STAGE.ocean ? '<p class="small dim center-note">Ocean lanes are open: routes can reach Colombo, Mumbai, Dubai and Tokyo.</p>' : '<p class="small dim center-note">Ocean lanes to Colombo, Mumbai, Dubai and Tokyo open at ' + rm(MM.STAGES[MM.STAGE.ocean].at) + (s.mode === 'daily' ? ' (not in the Daily Voyage)' : '') + '.</p>';
+      } else h += '<p class="small dim center-note">Freight routes unlock at ' + rm(MM.STAGES[MM.STAGE.freight].at) + '.</p>';
+    }
     return h;
   }
   function chipRow(action, items, current, label) {
@@ -328,6 +393,28 @@
     h += '<p class="small">Today in ' + esc(pShort(o.p)) + ': ' + gName(o.g) + ' ' + (o.kind === 'buy' ? 'costs ' + num(MM.buyPrice(s, o.p, o.g)) : 'sells for ' + num(MM.sellPrice(s, o.p, o.g))) + ' <span class="' + (v < -0.1 ? 'pos' : v > 0.1 ? 'warn' : 'dim') + '">(' + pct(v) + ' vs average)</span>. "Cheap" means 10% or more below average, "dear" 10% or more above.</p>';
     if (o.kind === 'sell') h += '<p class="small dim">In stock: ' + num(w.stock[o.g] ? Math.floor(w.stock[o.g].q) : 0) + ' t.</p>';
     return sheetWrap(h + '<button class="btn primary big" data-a="ord-save">Save order</button>', 'order');
+  }
+  function estateSheet() {
+    const s = run, p = s.port;
+    let h = '<header class="sh-head"><span class="ul-ic">' + I.estate + '</span><div><h3>Buy an estate</h3><small>' + esc(pName(p)) + ' · ' + rm(MM.CO.estCost) + ' · ' + rm(MM.CO.estUpkeep) + ' a day</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
+    h += '<p class="blurb">The harvest goes straight into your warehouse here every day. You pay the pickers about ' + Math.round(MM.CO.harvestCost * 100) + '% of the regional price per tonne. Estates are grown, not bought, so their goods count toward big orders, contracts and your shops.</p><ul class="recipes">';
+    MM.estateGoods(s, p).forEach(g => {
+      const E = MM.ESTATES[g], e = { g, lvl: 1, blightUntil: 0 };
+      const t = MM.estateYield(s, e), val = t * MM.sellPrice(s, p, g), cost = t * MM.GOODS[g].base * MM.CO.harvestCost;
+      h += '<li class="recipe"><div class="rc-io"><span>' + gIcon(g, 'xs') + '</span><span>' + esc(E.name) + '</span></div><div class="rc-main"><b>About ' + num(t) + ' t ' + esc(gName(g).toLowerCase()) + ' a day</b><small>Worth about ' + rm(val) + ' here, harvest ' + rm(cost) + (E.season ? ' · best in the ' + E.season + ' monsoon' : '') + '</small></div>' +
+        '<button class="btn sm primary" data-a="est-build" data-id="' + g + '"' + (s.cash < MM.CO.estCost ? ' disabled' : '') + '>Buy</button></li>';
+    });
+    return sheetWrap(h + '</ul>', 'estate');
+  }
+  function managerSheet() {
+    const s = run, p = s.port;
+    let h = '<header class="sh-head"><span class="ul-ic">' + I.manager + '</span><div><h3>Hire a branch manager</h3><small>' + esc(pName(p)) + ' · ' + rm(MM.CO.mgrFee) + ' to hire</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>';
+    h += '<p class="blurb">A manager keeps the factory here fed with about four days of inputs, sells surplus nothing else is waiting for, and answers trouble at this port for you.</p><ul class="recipes">';
+    Object.keys(MM.MGR_STYLES).forEach(k => {
+      const M = MM.MGR_STYLES[k];
+      h += '<li class="recipe"><div class="rc-main"><b>' + esc(M.name) + ' · ' + rm(M.wage) + ' a day</b><small>' + esc(M.desc) + '</small></div><button class="btn sm primary" data-a="mgr-hire" data-id="' + k + '"' + (s.cash < MM.CO.mgrFee ? ' disabled' : '') + '>Hire</button></li>';
+    });
+    return sheetWrap(h + '</ul>', 'manager');
   }
   function factorySheet() {
     const s = run, p = s.port;
@@ -364,6 +451,7 @@
   function screenTitle() {
     const normal = loadSlot('normal');
     const daily = loadSlot('daily');
+    const endless = loadSlot('endless');
     const key = todayKey();
     const d = meta.daily;
     const dailyBest = d.best[key];
@@ -382,8 +470,10 @@
       '<div class="title-bottom"><div class="title-actions">' +
       (storageWarning ? '<p class="warnline" role="status">Saving failed on this device. Copy a backup before closing the game.</p>' : '') +
       (UI.swWaiting ? '<button class="update" data-a="sw-update">' + I.spark + '<span>New version ready. <b>Tap to update</b></span></button>' : '') +
+      (metaLocked ? '<p class="warnline" role="status">Your Legacy could not be read on this device (it may be from a newer version). It is kept safe and will not be overwritten. Reload to update, or restore a backup in Settings.</p>' : '') +
       (normal ? '<button class="btn primary big cont" data-a="continue" data-slot="normal"><span>Continue season</span><small>Day ' + normal.day + '/' + normal.maxDays + ' · ' + esc(normal.phase === 'sea' ? 'At sea' : pName(normal.port)) + ' · ' + rm(MM.netWorth(normal)) + '</small></button>' : '') +
-      '<button class="btn ' + (normal ? 'ghost' : 'primary big') + '" data-a="new-season">' + I.play + '<span>New season</span></button>' +
+      (endless ? '<button class="btn ' + (normal ? 'ghost' : 'primary big') + ' cont" data-a="continue" data-slot="endless"><span>Continue Endless</span><small>Day ' + endless.day + ' · chapter ' + endless.endless.ch + ' · ' + rm(MM.netWorth(endless)) + '</small></button>' : '') +
+      '<button class="btn ' + (normal || endless ? 'ghost' : 'primary big') + '" data-a="new-season">' + I.play + '<span>New season</span></button>' +
       '<button class="daily-card" data-a="daily">' +
       '<div class="dc-l">' + I.calendar + '</div><div class="dc-m"><b>Daily Voyage</b><small>' + esc(prettyDate(key)) + (dailyLive ? ' · in progress, day ' + daily.day : dailyBest !== undefined ? ' · best ' + rm(dailyBest) : ' · same seas for everyone') + '</small></div>' +
       '<div class="dc-r ' + (streakNow > 0 ? 'live' : '') + '">' + I.flame + '<b>' + streakNow + '</b></div></button>' +
@@ -401,10 +491,14 @@
     try { const c = JSON.parse(raw); if (c && Number.isFinite(c.day)) day = ' (day ' + c.day + '/60)'; } catch (e) { /* unreadable saves still open the archive */ }
     return '<button class="link-row archive" data-a="network">' + I.scroll + '<span>Archive: Monsoon Company<small>Finish your saved company campaign' + esc(day) + '. New ones start in a season now.</small></span></button>';
   }
-  function setupDays(st) { return st.level >= 5 ? Math.round(st.days * 52 / 60) : st.days; }
+  function setupDays(st) { return st.days === 'endless' ? MM.CHAPTER_DAYS : st.level >= 5 ? Math.round(st.days * 52 / 60) : st.days; }
   function screenSetup() {
-    const st = UI.setup;
+    const st = UI.setup, endless = st.days === 'endless';
+    const len = setupDays(st), goal = MM.levelGoal({ maxDays: len });
     let h = '<div class="screen setup">' + topbar('New season') + '<main class="scroll">';
+    h += '<section><h3 class="sec">Season length</h3><div class="seg season-len">' + MM.SEASON_DAYS.map(d => '<button class="' + (st.days === d ? 'on' : '') + '" data-a="pick-days" data-id="' + d + '" aria-pressed="' + (st.days === d) + '"><b>' + d + ' days</b><small>' + (d === MM.SEASON_DAYS[0] ? 'Quicker season' : 'Time to build an empire') + '</small></button>').join('') +
+      '<button class="' + (endless ? 'on' : '') + '" data-a="pick-days" data-id="endless" aria-pressed="' + endless + '"><b>Endless</b><small>No last day</small></button></div>' +
+      (endless ? '<p class="small dim season-note">Endless runs in 60-day chapters, one monsoon each. Every chapter close brings a report, new bounties, a new weather twist, a tougher Towkay Lim and Legacy for a good chapter. Retire whenever you like for a final payout. Levels creep up by one every two chapters.</p>' : '') + '</section>';
     h += '<section><h3 class="sec">Choose your captain</h3><div class="captains">';
     MM.CAPTAIN_IDS.forEach(id => {
       const c = MM.CAPTAINS[id];
@@ -415,21 +509,19 @@
         (locked ? '<span class="lockline">' + I.lock + ' Unlock in Legacy · ' + cost + ' LP</span>' : '<span class="startline">Starts in ' + esc(pName(c.start)) + '</span>') + '</div></button>';
     });
     h += '</div></section>';
-    const len = setupDays(st), goal = MM.levelGoal({ maxDays: len });
-    h += '<section><h3 class="sec">Season length</h3><div class="seg season-len">' + MM.SEASON_DAYS.map(d => '<button class="' + (st.days === d ? 'on' : '') + '" data-a="pick-days" data-id="' + d + '" aria-pressed="' + (st.days === d) + '"><b>' + d + ' days</b><small>' + (d === MM.SEASON_DAYS[0] ? 'Quicker season' : 'Time to build an empire') + '</small></button>').join('') + '</div></section>';
-    h += '<section><h3 class="sec">Monsoon level</h3><div class="levels">';
+    h += '<section><h3 class="sec">' + (endless ? 'Starting Monsoon level' : 'Monsoon level') + '</h3><div class="levels">';
     for (let n = 0; n <= 10; n++) {
       const locked = n > meta.levelMax;
       h += '<button class="lvl ' + (st.level === n ? 'on' : '') + (locked ? ' locked' : '') + '" data-a="pick-level" data-id="' + n + '" aria-label="Monsoon level ' + n + (locked ? ', locked' : '') + '" aria-pressed="' + (st.level === n) + '">' + (locked ? I.lock : n) + '</button>';
     }
     h += '</div>';
     const mods = MM.LEVELS.slice(1, st.level + 1).map(l => l.desc);
-    h += '<div class="level-desc">' + (st.level === 0 ? '<p>Standard season. Finish worth <b>' + rm(goal) + '</b> or more to unlock level 1.</p>' : '<p>All of these apply:</p><ul>' + mods.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul><p class="dim">Legacy earned ×' + (1 + 0.2 * st.level).toFixed(1) + '. Finish worth ' + rm(goal) + ' or more to unlock the next level.</p>') + '</div></section>';
+    h += '<div class="level-desc">' + (endless ? '<p>' + (st.level ? 'Starts at level ' + st.level + '. ' : '') + 'Endless does not unlock levels. Your best Endless runs go in the Hall of Houses.</p>' : st.level === 0 ? '<p>Standard season. Finish worth <b>' + rm(goal) + '</b> or more to unlock level 1.</p>' : '<p>All of these apply:</p><ul>' + mods.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul><p class="dim">Legacy earned ×' + (1 + 0.2 * st.level).toFixed(1) + '. Finish worth ' + rm(goal) + ' or more to unlock the next level.</p>') + '</div></section>';
     const unl = meta.unlocks;
     let cash = 50000 + (unl.perk_cash1 ? 25000 : 0) + (unl.perk_cash2 ? 50000 : 0) + (unl.perk_cash3 ? 100000 : 0);
     if (st.level >= 9) cash = Math.max(30000, cash - 20000);
-    h += '<section class="setup-sum"><div><small>Starting cash</small><b>' + rm(cash) + '</b></div><div><small>Season</small><b>' + len + ' days</b></div><div><small>Ship</small><b>Old Coaster</b></div></section>';
-    h += '</main><footer class="cta"><button class="btn primary big" data-a="start-season">' + I.play + '<span>Start season</span></button></footer></div>';
+    h += '<section class="setup-sum"><div><small>Starting cash</small><b>' + rm(cash) + '</b></div><div><small>Season</small><b>' + (endless ? 'Endless' : len + ' days') + '</b></div><div><small>Ship</small><b>Old Coaster</b></div></section>';
+    h += '</main><footer class="cta"><button class="btn primary big" data-a="start-season">' + I.play + '<span>' + (endless ? 'Start Endless' : 'Start season') + '</span></button></footer></div>';
     return h;
   }
 
@@ -455,7 +547,10 @@
       (prof.imports.length ? '<span class="lab">Pays well</span>' + prof.imports.map(g => '<span class="mini">' + gIcon(g, 'xs') + esc(gName(g)) + '</span>').join('') : '') + '</div></div></section>';
   }
   function lastDayBanner(s) {
-    if (s.day < s.maxDays) {
+    if (s.mode === 'endless') {
+      if (s.endless.bankrupt) return '<div class="banner end">' + I.skull + '<p><b>The house is closed.</b> Your creditors have called time.</p><button class="btn primary" data-a="end-season">Count what’s left</button></div>';
+      return s.maxDays - s.day <= 5 ? '<div class="banner">' + I.clock + '<p><b>Chapter ' + s.endless.ch + ' closes in ' + plural(s.maxDays - s.day, 'day') + '.</b> Bounties are scored and Legacy banked at the close.</p></div>' : '';
+    } else if (s.day < s.maxDays) {
       if (s.maxDays - s.day <= 5) return '<div class="banner warn">' + I.clock + '<p><b>' + plural(s.maxDays - s.day, 'day') + ' left.</b> Any cargo still aboard at the end is sold wherever you are.</p></div>';
       return '';
     }
@@ -524,7 +619,7 @@
       const here = p === s.port;
       const available = s.ports.indexOf(p) >= 0;
       const pl = available && !here ? MM.planVoyage(s, p) : null;
-      const detail = here ? 'You are here' : !available ? (s.mode === 'daily' ? 'Not in today’s voyage' : 'Unlock in Legacy') : plural(pl.days, 'day') + ' · arrive day ' + pl.arrive + (pl.tooLate ? ' · after season end' : ' · ' + rm(pl.cost) + ' running cost');
+      const detail = here ? 'You are here' : !available ? (s.mode === 'daily' ? 'Not in today’s voyage' : MM.PORTS[p].ocean ? 'Ocean lane · opens at ' + rm(MM.STAGES[MM.STAGE.ocean].at) + ' net worth' : 'Unlock in Legacy') : plural(pl.days, 'day') + ' · arrive day ' + pl.arrive + (pl.tooLate ? ' · after season end' : ' · ' + rm(pl.cost) + ' running cost');
       return '<li><button class="destination" data-a="port" data-p="' + p + '"><b>' + esc(pName(p)) + '</b><small>' + esc(detail) + '</small></button></li>';
     }).join('') + '</ul></section>';
     h += priceBoard(s);
@@ -699,27 +794,33 @@
     const R = MM.RANKS[f.rank];
     const next = MM.RANKS[f.rank + 1];
     let h = '<div class="screen end"><main class="scroll">';
-    h += '<section class="end-hero rank-' + R.id + '"><small>' + (s.sunk ? 'Shipwrecked on day ' + s.day : s.mode === 'daily' ? 'Daily Voyage · ' + esc(prettyDate(s.dateKey)) : 'Season complete') + '</small><div class="stamp">' + esc(R.name) + '</div>' +
-      '<div class="end-nw"><small>Final net worth</small><b>' + rm(f.nw) + '</b>' + (f.personalBest ? '<span class="pb">' + I.star + 'Personal best</span>' : '') + '</div>' +
+    h += '<section class="end-hero rank-' + R.id + '"><small>' + (s.sunk ? 'Shipwrecked on day ' + s.day : s.mode === 'daily' ? 'Daily Voyage · ' + esc(prettyDate(s.dateKey)) : s.mode === 'endless' ? (f.bankrupt ? 'House closed by creditors' : 'Retired') + ' on day ' + s.day + ' · ' + plural(f.chapters || 0, 'chapter') + ' closed' : 'Season complete') + '</small><div class="stamp">' + esc(R.name) + '</div>' +
+      '<div class="end-nw"><small>Final net worth</small><b>' + rm(f.nw) + '</b>' + (f.personalBest ? '<span class="pb">' + I.star + 'Personal best</span>' : '') + (f.endlessBest ? '<span class="pb">' + I.star + 'Best Endless house</span>' : '') + '</div>' +
       (next ? '<p class="next">' + esc(next.name) + ' at ' + rm(next.min) + '</p>' : '<p class="next">The top rank. Legendary.</p>') + '</section>';
     h += '<section class="race ' + (f.beatRival ? 'ahead' : 'behind') + ' end-race"><div class="race-top">' + captAvatar('lim', 44) + '<div><b>' + (f.beatRival ? 'You beat ' + esc(MM.RIVAL.name) + '!' : esc(MM.RIVAL.name) + ' wins this one') + '</b><small>He finished on ' + rm(f.rivalNW) + '. You: ' + rm(f.nw) + '.</small></div></div>' +
       stepChart([{ c: '#c63b3b', pts: s.rival.hist }, { c: '#ffd65c', pts: s.hist.filter(p => p[0] < s.day).concat([[s.day, f.nw]]) }], 300, 80) + '</section>';
-    h += '<section><h3 class="sec">Bounties</h3>' + bountyList(s, true) + '</section>';
+    if (s.mode !== 'endless') h += '<section><h3 class="sec">Bounties</h3>' + bountyList(s, true) + '</section>';
+    else h += hallOfHouses();
     h += '<section class="breakdown"><div><small>Cash</small><b>' + rm(f.cash - f.sold) + '</b></div><div><small>Cargo sold at the end</small><b>' + rm(f.sold) + '</b></div><div><small>Ship at trade-in</small><b>' + rm(f.ship) + '</b></div>' + (f.company ? '<div><small>Company</small><b>' + rm(f.company) + '</b></div>' : '') + '<div><small>Debts</small><b class="' + (f.debts > 0 ? 'neg' : '') + '">' + (f.debts > 0 ? '−' : '') + rm(f.debts) + '</b></div></section>';
     const st = s.st;
     h += '<section class="statgrid"><div><b>' + st.voyages + '</b><small>voyages</small></div><div><b>' + st.trades + '</b><small>trades</small></div><div><b>' + rm(st.bestTrade) + '</b><small>best trade</small></div><div><b>' + st.contracts + '</b><small>contracts</small></div><div><b>' + st.storms + '</b><small>storms</small></div><div><b>' + st.pirates + '</b><small>pirate run-ins</small></div></section>';
     h += '<section class="lp-card"><div class="lp-big">' + I.spark + '<b>+' + (f.lp + f.newAch.reduce((a, x) => a + x.lp, 0)) + '</b><span>Legacy points</span></div><ul>' +
-      '<li><span>Season result' + (s.level ? ' ×' + (1 + 0.2 * s.level).toFixed(1) : '') + '</span><b>+' + f.lpBase + '</b></li>' +
+      (s.mode === 'endless' ? '<li><span>Retirement payout</span><b>+' + f.lpBase + '</b></li><li><span>Banked at chapter closes</span><b>' + (s.endless.lpPaid - f.lpBase) + '</b></li>' : '<li><span>Season result' + (s.level ? ' ×' + (1 + 0.2 * s.level).toFixed(1) : '') + '</span><b>+' + f.lpBase + '</b></li>') +
       (f.streakBonus ? '<li><span>Daily streak bonus</span><b>+' + f.streakBonus + '</b></li>' : '') +
       (f.rivalLP ? '<li><span>' + I.sword + 'Beat ' + esc(MM.RIVAL.name) + '</span><b>+' + f.rivalLP + '</b></li>' : '') +
       (f.bountyLP ? '<li><span>' + I.scroll + 'Bounties</span><b>+' + f.bountyLP + '</b></li>' : '') +
       f.newAch.map(a => '<li class="ach"><span>' + I.star + esc(a.name) + '</span><b>+' + a.lp + '</b></li>').join('') + '</ul>' +
       (f.rewardNote ? '<p class="reward-note">' + esc(f.rewardNote) + '</p>' : '') +
       (f.levelUp ? '<p class="lvlup">' + I.up + 'Monsoon level ' + f.levelUp + ' unlocked</p>' : '') + '</section>';
-    h += '</main><footer class="cta stack"><button class="btn primary big" data-a="' + (s.mode === 'daily' ? 'go-title' : 'new-season') + '">' + I.play + '<span>' + (s.mode === 'daily' ? 'Done' : 'Sail another season') + '</span></button><div class="cta-row"><button class="btn ghost" data-a="go-title">Title</button><button class="btn" data-a="legacy">' + I.spark + '<span>Legacy · ' + meta.lp + '</span></button></div></footer></div>';
+    h += '</main><footer class="cta stack"><button class="btn primary big" data-a="' + (s.mode === 'daily' ? 'go-title' : 'new-season') + '">' + I.play + '<span>' + (s.mode === 'daily' ? 'Done' : s.mode === 'endless' ? 'Start a new run' : 'Sail another season') + '</span></button><div class="cta-row"><button class="btn ghost" data-a="go-title">Title</button><button class="btn" data-a="legacy">' + I.spark + '<span>Legacy · ' + meta.lp + '</span></button></div></footer></div>';
     return h;
   }
 
+  function hallOfHouses() {
+    const H = meta.endless.hall;
+    if (!H.length) return '';
+    return '<section class="hall"><h3 class="sec">Hall of Houses <small>best Endless runs</small></h3><ol>' + H.map(x => '<li>' + captAvatar(x.captain, 28) + '<span><b>' + rm(x.nw) + '</b><small>' + esc(MM.CAPTAINS[x.captain].name) + ' · day ' + x.day + ' · ' + plural(x.ch, 'chapter') + '</small></span></li>').join('') + '</ol></section>';
+  }
   function screenLegacy() {
     const cats = ['Captains', 'Ports', 'Cargo', 'Ships', 'Perks'];
     let h = '<div class="screen legacy">' + topbar('Legacy', UI.backTo || 'go-title') + '<main class="scroll">';
@@ -748,12 +849,24 @@
     const m = meta.stats;
     let h = '<div class="screen ledger">' + topbar('Ledger') + '<main class="scroll">';
     h += '<section class="statgrid big"><div><b>' + m.seasons + '</b><small>seasons</small></div><div><b>' + rm(m.best) + '</b><small>best net worth</small></div><div><b>' + (m.bestRank === null ? '—' : esc(MM.RANKS[m.bestRank].name)) + '</b><small>best rank</small></div><div><b>' + m.voyages + '</b><small>voyages</small></div><div><b>' + m.contracts + '</b><small>contracts</small></div><div><b>' + (meta.daily.bestStreak || 0) + '</b><small>best daily streak</small></div></section>';
-    h += '<section><h3 class="sec">Achievements <small>' + Object.keys(meta.ach).length + '/' + MM.ACH.length + '</small></h3><ul class="achs">';
-    MM.ACH.forEach(a => { const got = !!meta.ach[a.id]; h += '<li class="' + (got ? 'got' : '') + '">' + (got ? I.star : I.lock) + '<div><b>' + esc(a.name) + '</b><small>' + esc(a.desc) + '</small></div><span>+' + a.lp + '</span></li>'; });
-    h += '</ul></section>';
+    const cur = run || loadSlot('endless') || loadSlot('normal');
+    h += '<section><h3 class="sec">Achievements <small>' + Object.keys(meta.ach).length + '/' + MM.ACH.length + '</small></h3>';
+    MM.ACH_CATS.forEach(cat => {
+      const list = MM.ACH.filter(a => a.cat === cat); if (!list.length) return;
+      const n = list.filter(a => meta.ach[a.id]).length;
+      h += '<h4 class="sub">' + cat + ' <small>' + n + '/' + list.length + '</small></h4><ul class="achs">';
+      list.forEach(a => {
+        const got = !!meta.ach[a.id];
+        let bar = '';
+        if (!got && a.prog) { try { const [v, goal] = a.prog(cur, meta); if (v > 0) bar = '<div class="bar"><i class="pos" style="width:' + Math.min(100, v / goal * 100).toFixed(0) + '%"></i></div><small class="dim">' + num(Math.min(v, goal)) + ' / ' + num(goal) + '</small>'; } catch (e) { /* no progress yet */ } }
+        h += '<li class="' + (got ? 'got' : '') + '">' + (got ? I.star : I.lock) + '<div><b>' + esc(a.name) + '</b><small>' + esc(a.desc) + '</small>' + bar + '</div><span>+' + a.lp + '</span></li>';
+      });
+      h += '</ul>';
+    });
+    h += '</section>' + hallOfHouses();
     h += '<section><h3 class="sec">Recent seasons</h3>';
     if (!meta.history.length) h += '<p class="empty">No finished seasons yet.</p>';
-    else h += '<ul class="hist">' + meta.history.slice(0, 15).map(x => '<li>' + captAvatar(x.captain, 30) + '<div><b>' + esc(MM.RANKS[x.rank].name) + '</b><small>' + (x.mode === 'daily' ? 'Daily · ' + esc(prettyDate(x.date)) : 'Level ' + x.level + ' · ' + new Date(x.t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })) + '</small></div><b class="nw">' + rm(x.nw) + '</b></li>').join('') + '</ul>';
+    else h += '<ul class="hist">' + meta.history.slice(0, 15).map(x => '<li>' + captAvatar(x.captain, 30) + '<div><b>' + esc(MM.RANKS[x.rank].name) + '</b><small>' + (x.mode === 'daily' ? 'Daily · ' + esc(prettyDate(x.date)) : (x.mode === 'endless' ? 'Endless · ' : '') + 'Level ' + x.level + ' · ' + new Date(x.t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })) + '</small></div><b class="nw">' + rm(x.nw) + '</b></li>').join('') + '</ul>';
     h += '</section></main></div>';
     return h;
   }
@@ -922,13 +1035,13 @@
   function menuSheet() {
     const s = run;
     const row = (a, icon, label, sub, cls) => '<button class="link-row ' + (cls || '') + '" data-a="' + a + '">' + icon + '<span>' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span></button>';
-    return sheetWrap('<header class="sh-head"><span class="ul-ic">' + I.anchor + '</span><div><h3>' + (s.mode === 'daily' ? 'Daily Voyage' : 'Season') + '</h3><small>Day ' + s.day + ' of ' + s.maxDays + ' · ' + esc(MM.CAPTAINS[s.captain].name) + (s.mode === 'daily' ? '' : ' · level ' + s.level) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>' +
+    return sheetWrap('<header class="sh-head"><span class="ul-ic">' + I.anchor + '</span><div><h3>' + (s.mode === 'daily' ? 'Daily Voyage' : s.mode === 'endless' ? 'Endless' : 'Season') + '</h3><small>Day ' + s.day + (s.mode === 'endless' ? ' · chapter ' + s.endless.ch : ' of ' + s.maxDays) + ' · ' + esc(MM.CAPTAINS[s.captain].name) + (s.mode === 'daily' ? '' : ' · level ' + s.level) + '</small></div><button class="icon-btn" data-a="close-sheet" aria-label="Close">' + I.close + '</button></header>' +
       '<div class="menu-list">' + row('go-title', I.back, 'Save and go to title', 'Save your voyage to pick it up later.') +
       row('export', I.download, 'Copy backup code', 'Backs up seasons with their company, Daily Voyage and Legacy. The archived company campaign uses its own Backup button.') +
       row('help-run', I.help, 'How to play', '') +
       row('toggle-sound', I.sound, 'Sound: ' + (meta.settings.sound ? 'on' : 'off'), '') +
       row('toggle-music', I.music, 'Music: ' + (meta.settings.music ? 'on' : 'off'), '') +
-      (s.phase === 'port' && !s.pending ? row('end-early', I.flag, 'End season now', 'Sell up here and score the season.', 'danger') : '') + '</div>', 'menu');
+      (s.phase === 'port' && !s.pending ? (s.mode === 'endless' ? row('end-early', I.flag, 'Retire and hand over the house', 'Sell up here and bank your retirement Legacy.', 'danger') : row('end-early', I.flag, 'End season now', 'Sell up here and score the season.', 'danger')) : '') + '</div>', 'menu');
   }
   function infoSheet() {
     const c = UI.sheet;
@@ -961,6 +1074,20 @@
     }
     h += (r.co ? '<div class="row-actions arr-acts"><button class="btn primary big" data-a="ashore">Go ashore</button><button class="btn ghost" data-a="ashore-co">' + I.company + '<span>Company</span></button></div>' : '<button class="btn primary big" data-a="ashore">Go ashore</button>');
     return modalWrap(h, 'arrival');
+  }
+  function chapterModal() {
+    const r = UI.modal.rep, s = run, E = s.endless;
+    const gain = r.nw - r.nw0;
+    let h = '<div class="ev-art ' + (r.beat ? 'good' : 'info') + '">' + (r.beat ? I.trophy : I.scroll) + '</div><div class="dialog"><h3>Chapter ' + r.ch + ' closed</h3><p>Days ' + r.from + ' to ' + r.to + '.</p></div>';
+    h += '<dl class="facts"><div><dt>Worth now</dt><dd>' + rm(r.nw) + '</dd></div><div><dt>This chapter</dt><dd class="' + (gain >= 0 ? 'pos' : 'neg') + '">' + (gain < 0 ? '−' : '+') + rm(Math.abs(gain)) + '</dd></div>' +
+      '<div><dt>' + esc(MM.RIVAL.name) + '</dt><dd>' + rm(r.rival) + (r.beat ? ' · you lead' : ' · he leads') + '</dd></div><div><dt>Bounties done</dt><dd>' + r.bounties + ' of 3</dd></div></dl>';
+    h += '<p class="lp-line">' + I.spark + '<span>' + (r.lp ? '<b>+' + r.lp + ' Legacy</b> banked' + (r.ch >= 7 ? ' (late chapters pay half)' : '') : (r.voyages < 2 ? 'No Legacy: a chapter needs at least two voyages.' : 'No Legacy this chapter.')) + '</span></p>';
+    h += '<div class="dialog small"><p><b>Chapter ' + E.ch + '.</b> ' + (s.twist ? esc(MM.TWISTS[s.twist].name) + ': ' + esc(MM.TWISTS[s.twist].desc) + ' ' : 'Fair trading weather. ') + 'Monsoon level ' + s.level + '. ' + esc(MM.RIVAL.name) + ' aims for ' + rm(s.rival.target) + ' by day ' + s.maxDays + '.</p></div>';
+    h += '<section><h3 class="sec">New bounties</h3>' + bountyList(s, true) + '</section>';
+    return modalWrap(h + '<button class="btn primary big" data-a="result-ok">Carry on</button>', 'result chapter');
+  }
+  function bankruptModal() {
+    return modalWrap('<div class="ev-art bad">' + I.skull + '</div><div class="dialog"><h3>The house is closed</h3><p>Ten days under water. Your creditors have called time on this trading house. Count what is left and start again.</p></div><button class="btn primary big" data-a="end-season">Count what’s left</button>', 'result bad');
   }
   function sunkModal() {
     return modalWrap(sceneHTML('sunk', { ship: run ? run.ship.cls : 'coaster', mode: 'dock', event: 'storm' }, 'ev-scene sunk-scene') + '<h3>She’s gone down</h3><p>' + esc(UI.modal.text) + '</p><button class="btn primary big" data-a="finish">Count what’s left</button>', 'result bad');
@@ -996,6 +1123,8 @@
       if (UI.modal.type === 'result') h = resultModal();
       else if (UI.modal.type === 'arrival') h = arrivalModal();
       else if (UI.modal.type === 'sunk') h = sunkModal();
+      else if (UI.modal.type === 'chapter') h = chapterModal();
+      else if (UI.modal.type === 'bankrupt') h = bankruptModal();
     } else if (run && run.pending && (UI.screen === 'run' || UI.screen === 'sea')) h = eventModal();
     else if (UI.sheet) {
       if (UI.sheet.type === 'trade') h = tradeSheet();
@@ -1006,6 +1135,8 @@
       else if (UI.sheet.type === 'menu') h = menuSheet();
       else if (UI.sheet.type === 'order') h = orderSheet();
       else if (UI.sheet.type === 'factory') h = factorySheet();
+      else if (UI.sheet.type === 'estate') h = estateSheet();
+      else if (UI.sheet.type === 'manager') h = managerSheet();
       else if (UI.sheet.type === 'route') h = routeSheet();
     }
     unmount(UI.owidgets);
@@ -1074,7 +1205,14 @@
       const stg = MM.coStage(run);
       if (stg > (run.co.toldStage || 0)) { run.co.toldStage = stg; Sound.levelup(); toast('Unlocked: ' + MM.STAGES[stg].name + '. See the Company tab.', 'ach'); }
       const got = MM.checkAch(run, meta, false);
-      if (got.length) { Sound.ach(); buzz([20, 40, 20]); got.forEach(a => toast('Achievement: ' + a.name + ' · +' + a.lp + ' Legacy', 'ach')); }
+      if (got.length) { Sound.ach(); buzz([20, 40, 20]); achToast(got); }
+      if (run.mode === 'endless') {
+        const paid = MM.collectEndlessLP(run, meta);
+        const E = run.endless;
+        if (E.seen < E.reports.length && E.reports.length && !UI.modal && run.phase === 'port') { UI.modal = { type: 'chapter', rep: E.reports[E.reports.length - 1] }; E.seen = E.reports.length; if (paid) Sound.levelup(); }
+        else if (paid) toast('Chapter Legacy banked: +' + paid + ' LP', 'ach');
+        if (E.bankrupt && !UI.modal && run.phase === 'port') UI.modal = { type: 'bankrupt' };
+      }
       (run.bounties || []).forEach(b => { if (b.done && !b.told) { b.told = true; Sound.levelup(); toast('Bounty done: ' + b.text + ' · +' + b.lp + ' Legacy', 'ach'); } else if (b.failed && !b.told && run.phase !== 'ended') { b.told = true; toast('Bounty missed: ' + b.text, 'bad'); } });
       saveRun();
     }
@@ -1117,6 +1255,9 @@
       } else if (r.type === 'sunk') {
         Sound.bad(); buzz([200, 100, 200]);
         UI.modal = { type: 'sunk', text: r.text }; renderOverlay();
+      } else if (r.type === 'rescued') {
+        Sound.bad(); buzz([200, 100, 200]);
+        UI.screen = 'run'; UI.tab = 'market'; UI.modal = { type: 'result', title: 'Lost at sea, not out of business', text: r.text, tone: 'bad', evType: 'storm' }; render();
       }
     }, delay);
   }
@@ -1142,15 +1283,17 @@
     render();
     Sound.fanfare(); buzz([30, 50, 30, 50, 90]);
   }
-  function startNormal() {
-    const st = UI.setup;
+  function startNormal(force) {
+    const st = UI.setup, endless = st.days === 'endless', slot = endless ? 'endless' : 'normal';
     const c = MM.CAPTAINS[st.captain];
     if (c.unlock && !meta.unlocks[c.unlock]) { toast('Unlock ' + c.name + ' in Legacy first', 'bad'); Sound.error(); return; }
-    const s = MM.newRun({ captain: st.captain, level: Math.min(st.level, meta.levelMax), days: st.days }, meta);
+    const cur = !force && loadSlot(slot);
+    if (cur) { UI.sheet = { type: 'confirm', title: endless ? 'Abandon your Endless run?' : 'Abandon your season?', text: 'You have ' + (endless ? 'an Endless run' : 'a season') + ' in progress (day ' + cur.day + ', ' + esc(rm(MM.netWorth(cur))) + '). Starting a new one will throw it away.', yes: 'start-season-go', yesLabel: 'Start fresh', danger: true }; renderOverlay(); return; }
+    const s = MM.newRun(endless ? { mode: 'endless', captain: st.captain, level: Math.min(st.level, meta.levelMax) } : { captain: st.captain, level: Math.min(st.level, meta.levelMax), days: st.days }, meta);
     lsSet('mm.setup.days', String(st.days));
-    lsSet(KEYS.normal, MM.serialize(s));
+    lsSet(KEYS[slot], MM.serialize(s));
     Sound.horn(); buzz(40);
-    enterRun('normal', s);
+    enterRun(slot, s);
   }
   function startDaily(force) {
     const key = todayKey();
@@ -1177,16 +1320,15 @@
     continue(d) { const s = loadSlot(d.slot); if (s) enterRun(d.slot, s); else render(); },
     'new-season'() {
       UI.setup.level = Math.min(UI.setup.level, meta.levelMax);
-      const cur = loadSlot('normal');
-      if (cur && UI.screen === 'title') { UI.sheet = { type: 'confirm', title: 'Abandon your season?', text: 'You have a season in progress (day ' + cur.day + ', ' + esc(rm(MM.netWorth(cur))) + '). Starting a new one will throw it away.', yes: 'new-season-go', yesLabel: 'Start fresh', danger: true }; renderOverlay(); return; }
       UI.screen = 'setup'; UI.sheet = null; render();
     },
     'new-season-go'() { lsDel(KEYS.normal); UI.screen = 'setup'; UI.sheet = null; render(); },
     'pick-capt'(d) { const c = MM.CAPTAINS[d.id]; if (c.unlock && !meta.unlocks[c.unlock]) { UI.backTo = 'new-season-back'; UI.legacyCat = 'Captains'; UI.screen = 'legacy'; render(); return; } UI.setup.captain = d.id; render(); },
     'new-season-back'() { UI.backTo = null; UI.screen = 'setup'; render(); },
     'pick-level'(d) { const n = +d.id; if (n > meta.levelMax) { toast('Finish level ' + meta.levelMax + ' worth ' + rm(MM.levelGoal({ maxDays: setupDays(UI.setup) })) + ' or more to unlock', 'bad'); return; } UI.setup.level = n; render(); },
-    'pick-days'(d) { const n = +d.id; if (MM.SEASON_DAYS.indexOf(n) < 0) return; UI.setup.days = n; Sound.tap(); render(); },
-    'start-season'() { startNormal(); },
+    'pick-days'(d) { if (d.id === 'endless') UI.setup.days = 'endless'; else { const n = +d.id; if (MM.SEASON_DAYS.indexOf(n) < 0) return; UI.setup.days = n; } Sound.tap(); render(); },
+    'start-season'() { startNormal(false); },
+    'start-season-go'() { UI.sheet = null; startNormal(true); },
     daily() {
       const key = todayKey();
       const cur = loadSlot('daily');
@@ -1211,7 +1353,7 @@
       if (!r.ok) { toast(r.msg, 'bad'); Sound.error(); render(); return; }
       Sound.ach(); buzz([20, 30, 20]);
       toast(MM.UNLOCK_BY_ID[d.id].name + ' unlocked', 'good');
-      (r.ach || []).forEach(a => toast('Achievement: ' + a.name + ' · +' + a.lp + ' Legacy', 'ach'));
+      achToast(r.ach || []);
       saveMeta(); render();
     },
     toggle(d) {
@@ -1223,7 +1365,7 @@
     'reset-tips'() { meta.tips = {}; meta.settings.tips = true; saveMeta(); toast('Tips will show again', 'good'); render(); },
     'tip-ok'(d) { meta.tips[d.id] = 1; saveMeta(); render(); },
     export() {
-      const data = { meta, normal: lsGet(KEYS.normal), daily: lsGet(KEYS.daily) };
+      const data = { meta, normal: lsGet(KEYS.normal), daily: lsGet(KEYS.daily), endless: lsGet(KEYS.endless) };
       if (run && UI.slot) data[UI.slot] = MM.serialize(run);
       const code = 'MM1:' + btoa(unescape(encodeURIComponent(JSON.stringify(data))));
       const done = () => toast('Backup code copied', 'good');
@@ -1237,7 +1379,7 @@
         const raw = box.value.trim(); if (raw.indexOf('MM1:') !== 0) throw new Error('bad');
         const data = JSON.parse(decodeURIComponent(escape(atob(raw.slice(4)))));
         meta = restoreBackup(data);
-        storageWarning = false;
+        storageWarning = false; metaLocked = false;
         UI.importOpen = false; toast('Progress restored', 'good'); UI.screen = 'title'; render();
       } catch (e) { toast(e.storage ? e.message : 'That code didn’t work. Your progress was not changed.', 'bad'); Sound.error(); }
     },
@@ -1278,6 +1420,19 @@
     'wh-store'(d) { const r = MM.storeCargo(run, d.g, run.cargo[d.g] ? run.cargo[d.g].q : 0); coAct(r, r.ok ? 'Stored ' + num(r.q) + ' t ' + gName(d.g).toLowerCase() + '.' : ''); },
     'wh-take'(d) { const w = run.co.wh[run.port]; const r = MM.takeCargo(run, d.g, w && w.stock[d.g] ? w.stock[d.g].q : 0); coAct(r, r.ok ? 'Loaded ' + num(r.q) + ' t ' + gName(d.g).toLowerCase() + '.' : ''); },
     'fac-sheet'() { UI.sheet = { type: 'factory' }; Sound.tap(); renderOverlay(); },
+    'co-tab'(d) { if (['overview', 'sites', 'freight'].indexOf(d.id) < 0) return; UI.coTab = d.id; Sound.tap(); render(); },
+    'est-sheet'() { UI.sheet = { type: 'estate' }; Sound.tap(); renderOverlay(); },
+    'est-build'(d) { UI.sheet = null; const r = MM.buildEstate(run, d.id); if (r.ok) Sound.fanfare(); coAct(r, 'Estate bought. The first harvest comes in tomorrow.'); },
+    'est-up'(d) { coAct(MM.upgradeEstate(run, d.p), 'Estate doubled.'); },
+    'shop-open'() { const r = MM.openShop(run); if (r.ok) Sound.fanfare(); coAct(r, 'Shop open. Stock it with goods you make, grow or ship in.'); },
+    'shop-up'(d) { coAct(MM.upgradeShop(run, d.p), 'Shop enlarged.'); },
+    'shop-tier'(d) { coAct(MM.setShop(run, d.p, d.v, null), 'Prices set.'); },
+    'shop-terms'(d) { coAct(MM.setShop(run, d.p, null, d.v), d.v === 'credit' ? 'Credit terms on: 30 days to pay.' : 'Cash only.'); },
+    'mgr-sheet'() { UI.sheet = { type: 'manager' }; Sound.tap(); renderOverlay(); },
+    'mgr-hire'(d) { UI.sheet = null; coAct(MM.hireManager(run, d.id), 'Manager hired.'); },
+    'mgr-style'(d) { coAct(MM.setManager(run, d.p, d.v), 'Manager briefed.'); },
+    'mgr-fire'(d) { UI.sheet = { type: 'confirm', title: 'Let the manager go?', text: 'You will run this port yourself again. The hiring fee is not refunded.', yes: 'mgr-fire-go', yesLabel: 'Let go', danger: true, p: d.p }; renderOverlay(); },
+    'mgr-fire-go'() { const p = UI.sheet && UI.sheet.p; UI.sheet = null; coAct(MM.fireManager(run, p), 'Manager let go.'); },
     'fac-build'(d) { UI.sheet = null; const r = MM.buildFactory(run, d.id); if (r.ok) Sound.fanfare(); coAct(r, 'Factory built. Feed it with standing buy orders.'); },
     'fac-up'(d) { coAct(MM.upgradeFactory(run, d.p), 'Factory doubled.'); },
     'order-new'(d) {
@@ -1321,6 +1476,7 @@
       const e = run.pending; if (!e) return;
       const r = MM.resolve(run, d.id);
       if (r.type === 'sunk') { UI.modal = { type: 'sunk', text: r.text }; afterAction(); render(); return; }
+      if (r.type === 'rescued') { stopSea(); UI.screen = 'run'; UI.tab = 'market'; UI.modal = { type: 'result', title: 'Lost at sea, not out of business', text: r.text, tone: 'bad', evType: 'storm' }; afterAction(); render(); return; }
       if (!r.ok) { toast(r.msg, 'bad'); Sound.error(); return; }
       if (r.tone === 'good') { Sound.good(); buzz(20); } else if (r.tone === 'bad') { Sound.bad(); buzz([60, 40, 60]); } else Sound.tap();
       UI.modal = { type: 'result', title: e.title, text: r.text, tone: r.tone, evType: e.type };
@@ -1340,7 +1496,9 @@
       afterAction(); render();
     },
     'end-season'() { finishSeason(); },
-    'end-early'() { UI.sheet = { type: 'confirm', title: 'End the season now?', text: 'Your cargo will be sold here at today’s prices, debts settled, and the season scored.<br><br>Season Legacy requires a completed voyage (shipwrecks count) and scales with days played; eligible runs earn at least 1 LP.', yes: 'end-season', yesLabel: 'End season', danger: true }; renderOverlay(); },
+    'end-early'() {
+      if (run && run.mode === 'endless') { UI.sheet = { type: 'confirm', title: 'Retire and hand over the house?', text: 'Your cargo will be sold here, debts settled, and your trading house scored. ' + (run.endless.ch >= 2 ? 'Retirement pays up to 30 Legacy.' : 'Close at least one chapter first to earn a retirement payout.') + ' This ends the Endless run.', yes: 'end-season', yesLabel: 'Retire', danger: true }; renderOverlay(); return; }
+      UI.sheet = { type: 'confirm', title: 'End the season now?', text: 'Your cargo will be sold here at today’s prices, debts settled, and the season scored.<br><br>Season Legacy requires a completed voyage (shipwrecks count) and scales with days played; eligible runs earn at least 1 LP.', yes: 'end-season', yesLabel: 'End season', danger: true }; renderOverlay(); },
     accept(d) { const r = MM.acceptOffer(run, +d.id); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.good(); toast('Contract signed'); afterAction(); render(); },
     'bank-borrow'(d) { const amt = Math.floor(MM.bankLimit(run) * +d.f); const r = MM.bankBorrow(run, amt); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.buy(); toast('Borrowed ' + rm(amt) + ' from the bank'); afterAction(); render(); },
     'bank-repay'() { const r = MM.bankRepay(run, run.bank); if (!r.ok) { toast(r.msg, 'bad'); return; } Sound.good(); toast('Bank repaid'); afterAction(); render(); },
@@ -1370,7 +1528,13 @@
       const s = run;
       const ph = s.monsoon.phase === 'NE' ? 'northeast' : 'southwest';
       const left = s.maxDays - s.day;
-      UI.sheet = { type: 'info', title: 'Day ' + s.day + ' of ' + s.maxDays, icon: I.calendar, html: '<p><b>' + plural(Math.max(0, left), 'day') + ' left</b> in the season. Net worth now: <b>' + esc(rm(MM.netWorth(s))) + '</b> (cash ' + esc(rm(s.cash)) + ', cargo ' + esc(rm(MM.cargoValue(s))) + ', ship ' + esc(rm(MM.tradeIn(s))) + (s.bank + s.along > 0 ? ', debts −' + esc(rm(s.bank + s.along)) : '') + ').</p><p>Running costs: ' + esc(rm(MM.dailyCost(s))) + ' a day.</p>' + sparkline(s.hist, 320, 70) + '<p class="dim">The ' + ph + ' monsoon is blowing.</p>' };
+      const co = MM.coValue(s, false);
+      const worth = '<p>Net worth now: <b>' + esc(rm(MM.netWorth(s))) + '</b> (cash ' + esc(rm(s.cash)) + ', cargo ' + esc(rm(MM.cargoValue(s))) + ', ship ' + esc(rm(MM.tradeIn(s))) + (co ? ', company ' + esc(rm(co)) : '') + (s.bank + s.along > 0 ? ', debts −' + esc(rm(s.bank + s.along)) : '') + ').</p><p>Running costs: ' + esc(rm(MM.dailyCost(s) + MM.coDaily(s))) + ' a day.</p>' + sparkline(s.hist, 320, 70) + '<p class="dim">The ' + ph + ' monsoon is blowing.</p>';
+      if (s.mode === 'endless') {
+        const E = s.endless;
+        const past = E.reports.slice().reverse().map(r => '<li><span>Chapter ' + r.ch + '</span><b>' + rm(r.nw) + '</b><small>' + (r.beat ? 'ahead of Lim' : 'behind Lim') + (r.lp ? ' · +' + r.lp + ' LP' : '') + '</small></li>').join('');
+        UI.sheet = { type: 'info', title: 'Day ' + s.day + ' · chapter ' + E.ch, icon: I.calendar, html: '<p><b>' + plural(Math.max(0, left), 'day') + '</b> until chapter ' + E.ch + ' closes. Legacy banked so far: <b>' + E.lpPaid + '</b>.</p>' + worth + (past ? '<ul class="chapters">' + past + '</ul>' : '') };
+      } else UI.sheet = { type: 'info', title: 'Day ' + s.day + ' of ' + s.maxDays, icon: I.calendar, html: '<p><b>' + plural(Math.max(0, left), 'day') + ' left</b> in the season.</p>' + worth };
       renderOverlay();
     },
     'wind-info'() {
