@@ -4,7 +4,7 @@ An installable, offline-capable trading game for phones, drawn in 16-bit pixel a
 
 ## One season, captain first
 
-Each season is 60 days across 9 South-East Asian ports. Buy cargo, read the monsoon, sail, sell, take contracts and beat **Towkay Lim**, the rival trader. As your peak net worth grows, the season unlocks the supply chain one layer at a time, in a fifth **Company** tab:
+Choose a 90 or 120-day season (Daily Voyage stays 60 days) across 9 South-East Asian ports. Buy cargo, read the monsoon, sail, sell, take contracts and beat **Towkay Lim**, the rival trader. As your peak net worth grows, the season unlocks the supply chain one layer at a time, in a fifth **Company** tab:
 
 | Unlocks at | Layer | What you can do |
 | --- | --- | --- |
@@ -21,7 +21,11 @@ Each season is 60 days across 9 South-East Asian ports. Buy cargo, read the mons
 - **Freight routes** repeat every trip until paused, delivering to your warehouse or selling on arrival.
 - A **cash reserve** (default RM 20k) protects the captain: orders, factories and freight never spend below it. Contracts whose destination has your warehouse are delivered from it automatically.
 
-The map shows your warehouses, factory smoke and freight at sea. At the end of the season, the company counts in your net worth: stock at local prices, buildings at 70% of what you invested. Products stay hidden until factories unlock, so the early game is as simple as before.
+The map shows your warehouses, factory smoke and freight at sea. Each warehouse, factory and route shows its own profit, and docking brings a short report of what the company did while you sailed.
+
+Once you own a factory, **big orders** arrive: hundreds of tonnes of a product for one port, paid per tonne on delivery plus a bonus when complete (by ship, freight route or from your warehouse there; no penalty for falling short). **Company alerts** ask for a decision now and then: pay off a dockers' strike or wait, repair a broken factory or wait for parts, run overtime during a product boom.
+
+Longer seasons scale their goals: the rival, bounties and the net worth needed to unlock the next Monsoon level (RM 3M in 90 days, RM 4M in 120). At the end of the season, the company counts in your net worth: stock at local prices, buildings at 70% of what you invested. Products stay hidden until factories unlock, so the early game is as simple as before.
 
 Also in every season: monsoon winds, storms and pirates, three Legacy bounties, Daily Voyage, Monsoon levels, and Legacy unlocks between seasons. See `docs/merged-design.md` for the design.
 
@@ -71,4 +75,4 @@ The browser suite uses actual UI controls against a Pages-style subpath, includi
 
 See `docs/interaction-review.md` and `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
 
-Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.1.0; archived company save schema is v3.
+Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.2.0; archived company save schema is v3.

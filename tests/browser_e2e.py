@@ -338,7 +338,7 @@ def v2_migration_journey(page, context, url, out):
         assert migrated[key]==original[key]
     assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
     page.wait_for_function('navigator.serviceWorker.controller !== null')
-    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.1.0');return (await c.keys()).map(r=>r.url);}''')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.2.0');return (await c.keys()).map(r=>r.url);}''')
     assert any(x.endswith('/company-actions.js') for x in cached)
     assert any(x.endswith('/company-play.js') for x in cached)
     assert all(any(x.endswith('/' + n) for x in cached) for n in ('art.js', 'pixel.js', 'sfx.js'))
@@ -431,6 +431,46 @@ def merged_supply_chain_journey(page, context, url, out):
     act(page, 'continue', slot='normal')
     assert season_state(page)['co'] == s['co']
 
+def season_length_and_company_events_journey(page, context, url, out):
+    # Choose a 120-day season through the setup screen, then handle a big order and a company alert.
+    page.set_viewport_size({'width':390,'height':844})
+    page.goto(url, wait_until='networkidle')
+    act(page, 'new-season')
+    act(page, 'pick-days', id='120')
+    assert page.locator('[data-a="pick-days"][data-id="120"]').get_attribute('aria-pressed') == 'true'
+    assert '120 days' in page.locator('.setup-sum').inner_text()
+    act(page, 'start-season')
+    assert season_state(page)['maxDays'] == 120
+    page.evaluate("window.__mm.A['go-title']()")  # leave the season so it is not saved over the fixture
+    page.evaluate('''() => {const s=MM.newRun({seed:'e2e-co2',days:120},MM.newMeta());s.cash+=3000000;s.st.peak=3000000;
+      MM.buildWarehouse(s);MM.buildFactory(s,'food');
+      for(let i=0;i<40&&!(s.co.dealOffer&&s.co.alerts.some(a=>MM.alertOpen(s,a)));i++)MM.waitDay(s);
+      localStorage.setItem('mm.run.normal.v1',MM.serialize(s));}''')
+    page.reload(wait_until='networkidle')
+    act(page, 'continue', slot='normal')
+    assert page.locator('.tab[data-id="company"] .dot').count() == 1
+    act(page, 'tab', id='company')
+    assert page.locator('.deal-card.offer').count() == 1
+    assert page.locator('.alert-card').count() == 1
+    page.evaluate("document.getElementById('toasts').innerHTML=''")
+    page.screenshot(path=str(out/'company-needs-you.png'))
+    act(page, 'deal-accept')
+    st = season_state(page)
+    assert st['co']['dealOffer'] is None and len(st['co']['deals']) == 1
+    alert = next(a for a in st['co']['alerts'] if a['choice'] is None)
+    act(page, 'co-choose', id=str(alert['id']), c=alert['choices'][0]['id'])
+    st = season_state(page)
+    assert next(a for a in st['co']['alerts'] if a['id'] == alert['id'])['choice'] == alert['choices'][0]['id']
+    assert page.locator('.alert-card').count() == 0
+    assert page.locator('.deal-card:not(.offer)').count() == 1
+    for width, height in ((320,740),(375,812)):
+        page.set_viewport_size({'width':width,'height':height})
+        sizes = page.evaluate('''() => [document.documentElement,document.body,document.querySelector('#app'),document.querySelector('.scroll')]
+          .filter(Boolean).map(e=>({tag:e.id||e.className||e.tagName,width:e.clientWidth,scroll:e.scrollWidth}))''')
+        assert all(x['scroll'] <= x['width'] + 1 for x in sizes), sizes
+    page.evaluate("document.getElementById('toasts').innerHTML=''")
+    page.screenshot(path=str(out/'company-orders.png'))
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',default='/tmp/mm-browser-evidence')
@@ -446,7 +486,7 @@ def main():
             for engine in args.browsers:
                 browser=getattr(playwright,engine).launch(headless=True, **({'executable_path':os.environ['MM_CHROMIUM_PATH']} if engine=='chromium' and os.environ.get('MM_CHROMIUM_PATH') else {}))
                 try:
-                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey)]:
+                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey)]:
                         directory=output/engine/name;directory.mkdir(parents=True,exist_ok=True)
                         context=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
                         context.tracing.start(screenshots=True,snapshots=True,sources=True)

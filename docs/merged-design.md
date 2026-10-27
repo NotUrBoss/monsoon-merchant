@@ -1,6 +1,6 @@
 # One game: captain first, company second
 
-Monsoon Merchant now has a single season mode. You start as a captain with one old coaster and RM 50,000 and trade by hand. As your net worth grows, the season unlocks the supply chain one layer at a time. You stay the captain throughout: the company runs in the background every day, including while you are at sea.
+Monsoon Merchant now has a single season mode, 90 or 120 days long. You start as a captain with one old coaster and RM 50,000 and trade by hand. As your net worth grows, the season unlocks the supply chain one layer at a time. You stay the captain throughout: the company runs in the background every day, including while you are at sea.
 
 ## Stages within a season
 
@@ -46,3 +46,14 @@ The Monsoon Company campaign and the old Classic menu entry are retired. A compa
 ## Future hubs
 
 The port catalog is data-driven. Tokyo, Mumbai, Kolkata, Colombo, Dubai and Sydney are planned as later Legacy unlocks under **Ports**. Each needs map geography, sea lanes and price factors before it can be enabled.
+
+## Season length (v2.2)
+
+Players choose 90 or 120 days on the New season screen. Daily Voyage stays at 60 days. Monsoon level 5 and above shortens the season by 13% (78 or 104 days). Goals scale with length: the rival target (×2.25 at 90 days, ×3.5 at 120), the bounty thresholds, and the net worth that unlocks the next level (RM 3M / RM 4M instead of Merchant at RM 1.5M). Bot simulations keep the rival beaten about 60–80% of the time by a greedy trader.
+
+## Reports, profit, big orders and alerts (v2.2)
+
+- **Profit per business**: warehouses track sales, profit and rent; factories track the value they add over input cost; routes track profit after freight.
+- **Arrival report**: everything the company bought, made, shipped and sold since you last docked, with notable events, shown on the arrival card.
+- **Big orders**: after you own a factory, an offer arrives every 8 to 12 days for 10 to 450 t of a product at a port. Paid per tonne on delivery (6 to 16% over that port's normal price) plus a bonus of about 15% when complete. At most two at once. No penalty for falling short.
+- **Company alerts** (about one every two to three weeks): a dockers' strike stops a warehouse for 3 to 5 days (pay to end it, or wait); a factory breakdown stops it for 5 days (repair now, or wait); a product boom raises one port's price by 30 to 45% (run overtime for double output at 1.5× fees, or carry on).

@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -157,7 +157,7 @@
     { n: 2, desc: 'Storms 30% more likely.' },
     { n: 3, desc: 'Rumours less reliable.' },
     { n: 4, desc: 'Bank interest +50%.' },
-    { n: 5, desc: 'Season cut to 52 days.' },
+    { n: 5, desc: 'Season 13% shorter (78 or 104 days).' },
     { n: 6, desc: 'Pirates 40% bolder.' },
     { n: 7, desc: 'Trading spreads +2%.' },
     { n: 8, desc: 'Contract penalties doubled.' },
@@ -165,6 +165,8 @@
     { n: 10, desc: 'No monsoon forecast. Stronger winds.' },
   ];
 
+  // Season lengths a player can choose for a normal season. Daily Voyage stays 60 days.
+  const SEASON_DAYS = [90, 120];
   const RANKS = [
     { id: 'deckhand', name: 'Deckhand', min: -Infinity },
     { id: 'bosun', name: 'Bosun', min: 200000 },
@@ -327,6 +329,7 @@
     const ports = PORT_IDS.filter(p => !PORTS[p].unlock || unl[PORTS[p].unlock]);
     const goods = GOOD_IDS.filter(g => !GOODS[g].unlock || unl[GOODS[g].unlock]);
     const W = stream(seed + ':world');
+    const length = daily ? 60 : (SEASON_DAYS.indexOf(+opts.days) >= 0 ? +opts.days : SEASON_DAYS[0]);
     const s = {
       v: 1, version: VERSION, mode, dateKey: opts.dateKey || null, seed,
       rngW: W, rngL: stream(seed + ':luck'),
@@ -335,7 +338,7 @@
         contacts: !!unl.perk_contacts, insurer: !!unl.perk_insurer, crew: !!unl.perk_crew, reefer: !!unl.ship_reefer,
       },
       twist: null,
-      day: 1, maxDays: 60,
+      day: 1, maxDays: length,
       phase: 'port', port: CAPTAINS[captain].start,
       cash: 50000, bank: 0, along: 0, alongDue: 0,
       ship: { cls: 'coaster', cond: 100, up: {} },
@@ -362,7 +365,7 @@
       if (unl.perk_cash3) s.cash += 100000;
     }
     if (level >= 9) s.cash = Math.max(30000, s.cash - 20000);
-    if (level >= 5) s.maxDays = 52;
+    if (level >= 5) s.maxDays = Math.round(length * 52 / 60);
     if (captain === 'wong') s.ship.up.cold = true;
     if (daily) {
       s.twist = rPick(W, TWIST_IDS);
@@ -598,9 +601,11 @@
     else { e.announced = true; addNews(s, { kind: e.kind, text: def.text, good: def.good, ev: e.id, end: e.end }); }
   }
   /* ================= Rival ================= */
+  // Longer seasons compound: the rival grows faster than linearly with the season length.
+  function rivalScale(d) { return d <= 60 ? d / 60 : 1 + 2.5 * (d - 60) / 60; }
   function initRival(s) {
     const W = s.rngW;
-    const target = 2000000 * (1 + 0.15 * s.level) * (0.8 + rnd(W) * 0.45) * (s.twist === 'windfall' ? 1.3 : 1) * (s.maxDays / 60);
+    const target = 2000000 * (1 + 0.15 * s.level) * (0.8 + rnd(W) * 0.45) * (s.twist === 'windfall' ? 1.3 : 1) * rivalScale(s.maxDays);
     s.rival = { nw: 50000, target: Math.round(target), next: rInt(W, 1, 3), moves: 0, walk: 0, hist: [] };
   }
   function rivalCurve(s, day) { const x = clamp(day / s.maxDays, 0, 1); return 50000 + (s.rival.target - 50000) * Math.pow(x, 1.7); }
@@ -633,6 +638,10 @@
   }
 
   /* ================= Bounties ================= */
+  // Round a goal to a friendly figure (two significant digits, ending in 0 or 5).
+  function niceGoal(x) { const m = Math.pow(10, Math.floor(Math.log10(x)) - 1); return Math.round(x / (5 * m)) * 5 * m; }
+  // Net-worth goal for unlocking the next Monsoon level: a Merchant over 60 days, scaled to longer seasons.
+  function levelGoal(s) { return niceGoal(RANKS[MERCHANT_RANK].min * Math.pow(s.maxDays / 60, 1.5)); }
   function makeBounty(s, type) {
     const W = s.rngW;
     const half = Math.round(s.maxDays / 2);
@@ -646,10 +655,10 @@
       b.p = { g, port: p, q, day: d };
       b.text = 'Sell ' + q + ' t of ' + GOODS[g].name.toLowerCase() + ' in ' + PORTS[p].name + ' by day ' + d;
     } else if (type === 'ports') { b.p = { n: Math.min(6, s.ports.length) }; b.text = 'Drop anchor in ' + b.p.n + ' different ports'; }
-    else if (type === 'bigsale') { b.p = { x: 400000 }; b.text = 'Make a single sale worth ' + rm(b.p.x); }
-    else if (type === 'profit') { b.p = { x: 150000 }; b.text = 'Clear ' + rm(b.p.x) + ' profit on one sale'; }
-    else if (type === 'contracts') { b.p = { n: 3 }; b.text = 'Deliver 3 contracts'; }
-    else if (type === 'nwby') { b.p = { x: 1e6, day: half }; b.text = 'Be worth ' + rm(1e6) + ' by day ' + half; }
+    else if (type === 'bigsale') { b.p = { x: niceGoal(400000 * s.maxDays / 60) }; b.text = 'Make a single sale worth ' + rm(b.p.x); }
+    else if (type === 'profit') { b.p = { x: niceGoal(150000 * s.maxDays / 60) }; b.text = 'Clear ' + rm(b.p.x) + ' profit on one sale'; }
+    else if (type === 'contracts') { b.p = { n: Math.max(3, 3 + Math.round((s.maxDays - 60) / 30)) }; b.text = 'Deliver ' + b.p.n + ' contracts'; }
+    else if (type === 'nwby') { const x = niceGoal(1e6 * Math.pow(half / 30, 2.2)); b.p = { x, day: half }; b.text = 'Be worth ' + rm(x) + ' by day ' + half; }
     else if (type === 'hull') { b.p = { x: 80 }; b.text = 'Finish the season with the hull at 80% or better'; }
     else if (type === 'rivalby') { b.p = { day: half }; b.text = 'Be worth more than ' + RIVAL.name + ' on day ' + half; }
     else if (type === 'nodebt') { b.text = 'Never borrow from the Ah Long'; }
@@ -1103,6 +1112,17 @@
         rep.lines.push('Contract here needs ' + k.qty + ' t of ' + GOODS[k.good].name.toLowerCase() + '. You have ' + (c ? c.q : 0) + ' t.');
       }
     }
+    if (s.co) {
+      for (const d of s.co.deals.slice()) {
+        const c = s.cargo[d.g];
+        if (d.port !== s.port || !c) continue;
+        const unit = c.cost, q = Math.min(c.q, d.qty - d.got), pay = Math.round(q * d.unit), done = d.got + q >= d.qty;
+        removeCargo(s, d.g, q);
+        dealDeliver(s, d, q, unit, null);
+        rep.delivered.push({ good: d.g, qty: q, pay: pay + (done ? d.bonus : 0), profit: pay - unit * q, big: true, done });
+      }
+      rep.co = takeCoReport(s);
+    }
     const col = checkCollectors(s); if (col) rep.lines.push(col);
     genOffers(s);
     const L = s.rngL; const u = rnd(L), u2 = rnd(L);
@@ -1262,7 +1282,7 @@
     coffeemix: { name: 'Coffee roastery', input: { coffee: 2, rice: 1 }, out: 2, batches: 2 },
     machinery: { name: 'Machine works', input: { steel: 3, electronics: 1 }, out: 1, batches: 1 },
   };
-  function newCo() { return { wh: {}, fac: {}, routes: [], reserve: CO.reserve, seq: 0, made: 0, trips: 0, autoBought: 0, autoSold: 0, upkeep: 0, built: 0 }; }
+  function newCo() { return coFill({ wh: {}, fac: {}, routes: [], reserve: CO.reserve, seq: 0, made: 0, trips: 0, autoBought: 0, autoSold: 0, upkeep: 0, built: 0 }); }
   function coStage(s) { let k = 0; STAGES.forEach((st, i) => { if ((s.st.peak || 0) >= st.at) k = i; }); return Math.max(k, s.co ? (s.co.minStage || 0) : 0); }
   function nextStage(s) { const k = coStage(s); return STAGES[k + 1] || null; }
   function whUsed(w) { let t = 0; for (const g in w.stock) t += w.stock[g].q; return t; }
@@ -1271,6 +1291,7 @@
   function stockAdd(w, g, q, unit) { if (q <= 0) return; const c = w.stock[g] || (w.stock[g] = { q: 0, cost: 0 }); c.cost = (c.cost * c.q + unit * q) / (c.q + q); c.q += q; }
   function stockTake(w, g, q) { const c = w.stock[g]; if (!c) return 0; q = Math.min(q, c.q); c.q -= q; if (c.q <= 0) delete w.stock[g]; return q; }
   function spendable(s) { return Math.max(0, s.cash - (s.co ? s.co.reserve : CO.reserve)); }
+  function fmtN(n) { return Math.round(n).toLocaleString('en-US'); }
   function coLog(s, text, kind) { log(s, text, kind || 'co'); }
   function needStage(s, k) { return coStage(s) >= k ? null : fail(STAGES[k].name + ' unlock at ' + rm(STAGES[k].at) + ' net worth'); }
   function freightDays(s, from, to) {
@@ -1285,7 +1306,7 @@
     if (s.co.wh[s.port]) return fail('You already have a warehouse here');
     if (s.cash < CO.whCost) return fail('Not enough cash');
     s.cash -= CO.whCost; s.co.built += CO.whCost;
-    s.co.wh[s.port] = { lvl: 1, stock: {}, orders: [], invest: CO.whCost };
+    s.co.wh[s.port] = { lvl: 1, stock: {}, orders: [], invest: CO.whCost, pl: { bought: 0, sold: 0, profit: 0, upkeep: 0 } };
     coLog(s, 'Warehouse opened in ' + PORTS[s.port].name + '.', 'good');
     afterChange(s);
     return { ok: true };
@@ -1302,6 +1323,7 @@
   function storeCargo(s, g, q) {
     if (!canAct(s)) return fail('Not now');
     const w = s.co.wh[s.port]; if (!w) return fail('No warehouse here');
+    if (strikeAt(s, s.port)) return fail('The dockers are on strike');
     if (GOODS[g].perish) return fail('Warehouses have no cold storage');
     const c = s.cargo[g]; if (!c) return fail('Not aboard');
     q = Math.min(Math.floor(q), c.q, whFree(w));
@@ -1313,6 +1335,7 @@
   function takeCargo(s, g, q) {
     if (!canAct(s)) return fail('Not now');
     const w = s.co.wh[s.port]; if (!w) return fail('No warehouse here');
+    if (strikeAt(s, s.port)) return fail('The dockers are on strike');
     const c = w.stock[g]; if (!c) return fail('Not in the warehouse');
     q = Math.min(Math.floor(q), c.q, freeSpace(s));
     if (q <= 0) return fail('Your hold is full');
@@ -1342,7 +1365,7 @@
     if (s.co.fac[s.port]) return fail('This port already has your factory');
     if (s.cash < CO.facCost) return fail('Not enough cash');
     s.cash -= CO.facCost; s.co.built += CO.facCost;
-    s.co.fac[s.port] = { recipe, lvl: 1, made: 0, invest: CO.facCost, note: '' };
+    s.co.fac[s.port] = { recipe, lvl: 1, made: 0, invest: CO.facCost, note: '', added: 0, upkeep: 0, downUntil: 0, otUntil: 0 };
     coLog(s, RECIPES[recipe].name + ' built in ' + PORTS[s.port].name + '.', 'good');
     afterChange(s);
     return { ok: true };
@@ -1365,7 +1388,7 @@
     if (s.goods.indexOf(g) < 0 || GOODS[g].perish) return fail('Not this cargo');
     qty = Math.floor(qty); if (!(qty >= 10 && qty <= 200)) return fail('Choose 10 to 200 t a trip');
     if (s.co.routes.length >= CO.routeMax) return fail('Up to ' + CO.routeMax + ' routes');
-    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false };
+    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false, sold: 0, profit: 0, freight: 0 };
     s.co.routes.push(r);
     return { ok: true, id: r.id };
   }
@@ -1380,22 +1403,29 @@
   function vsAvg(s, p, g) { return baseMid(s, p, g) / (GOODS[g].base * Math.exp(s.G[g])) - 1; }
   function companyTick(s) {
     const co = s.co; if (!co) return;
+    coFill(co);
+    const rep = co.rep;
+    // 0. big orders and company alerts
+    dealsTick(s);
+    alertsTick(s);
     const ports = Object.keys(co.wh);
     if (!ports.length && !co.routes.length) return;
     // 1. upkeep
     let up = 0;
-    ports.forEach(p => { up += co.wh[p].lvl * CO.whUpkeep; });
-    Object.keys(co.fac).forEach(p => { up += co.fac[p].lvl * CO.facUpkeep; });
-    s.cash -= up; s.st.costs += up; co.upkeep += up;
+    ports.forEach(p => { const w = co.wh[p], c = w.lvl * CO.whUpkeep; up += c; w.pl.upkeep += c; });
+    Object.keys(co.fac).forEach(p => { const f = co.fac[p], c = f.lvl * CO.facUpkeep; up += c; f.upkeep += c; });
+    s.cash -= up; s.st.costs += up; co.upkeep += up; rep.upkeep += up;
     // 2. factories
     Object.keys(co.fac).forEach(p => {
       const f = co.fac[p], w = co.wh[p], R = RECIPES[f.recipe];
       if (!w) return;
-      let n = f.lvl * R.batches;
+      if (f.downUntil >= s.day) { f.note = 'Broken down until day ' + (f.downUntil + 1); return; }
+      const ot = f.otUntil >= s.day;
+      let n = f.lvl * R.batches * (ot ? 2 : 1);
       Object.keys(R.input).forEach(g => { n = Math.min(n, Math.floor(((w.stock[g] || {}).q || 0) / R.input[g])); });
       const grow = R.out - Object.keys(R.input).reduce((t, g) => t + R.input[g], 0);
       if (grow > 0) n = Math.min(n, Math.floor(whFree(w) / grow));
-      const fee = Math.round(GOODS[f.recipe].base * R.out * CO.batchFee);
+      const fee = Math.round(GOODS[f.recipe].base * R.out * CO.batchFee * (ot ? 1.5 : 1));
       n = Math.min(n, Math.floor(spendable(s) / Math.max(1, fee)));
       if (n <= 0) { f.note = Object.keys(R.input).some(g => ((w.stock[g] || {}).q || 0) < R.input[g]) ? 'Waiting for inputs' : 'Cash below your reserve'; return; }
       let cost = fee * n;
@@ -1403,11 +1433,14 @@
       s.cash -= fee * n; s.st.costs += fee * n;
       const out = R.out * n;
       stockAdd(w, f.recipe, out, cost / out);
-      f.made += out; co.made += out; f.note = 'Made ' + out + ' t today';
+      f.added += Math.round(out * baseMid(s, p, f.recipe) * (1 - spreadOf(s) / 2) - cost);
+      f.made += out; co.made += out; rep.made += out; rep.fees += fee * n;
+      f.note = 'Made ' + out + ' t today' + (ot ? ' (overtime)' : '');
     });
     // 3. standing buy and sell orders
     ports.forEach(p => {
       const w = co.wh[p];
+      if (strikeAt(s, p)) return;
       w.orders.forEach(o => {
         if (s.goods.indexOf(o.g) < 0) return;
         const v = vsAvg(s, p, o.g);
@@ -1419,6 +1452,7 @@
           if (q <= 0) return;
           const qt = coTrade(s, p, o.g, q, 'buy');
           s.cash -= qt.total; stockAdd(w, o.g, q, qt.total / q); o.done += q; co.autoBought += qt.total; s.st.trades++;
+          w.pl.bought += qt.total; rep.bought += qt.total;
         } else {
           if (o.mode === 'dear' && v < 0.1) return;
           const have = (w.stock[o.g] || {}).q || 0;
@@ -1430,27 +1464,34 @@
           s.st.maxSale = Math.max(s.st.maxSale, qt.total); s.st.bestTrade = Math.max(s.st.bestTrade, qt.total - basis);
           if (qt.total > basis) s.st.profitSales++;
           addSold(s, p, o.g, q);
+          plSale(co, w.pl, qt.total, basis);
         }
       });
     });
     // 4. freight routes: arrivals, then departures
     co.routes.forEach(r => {
       if (r.trip && s.day >= r.trip.arrive) {
-        const t = r.trip; r.trip = null; r.trips++; co.trips++;
-        let q = t.q;
-        if (rnd(s.rngL) < 0.04) { const lost = Math.round(q * rRange(s.rngL, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; coLog(s, 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.', 'bad'); }
-        if (r.dest === 'wh' && co.wh[r.to]) {
-          const w = co.wh[r.to], room = Math.min(q, whFree(w));
-          stockAdd(w, r.g, room, t.unit); q -= room;
+        if (strikeAt(s, r.to)) { r.trip.arrive = s.day + 1; }
+        else {
+          const t = r.trip; r.trip = null; r.trips++; co.trips++;
+          let q = t.q;
+          if (rnd(s.rngL) < 0.04) { const lost = Math.round(q * rRange(s.rngL, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; r.profit += pay - lost * t.unit; const msg = 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.'; coLog(s, msg, 'bad'); repNote(s, msg); }
+          // Big orders at the destination take the cargo first.
+          co.deals.filter(d => d.port === r.to && d.g === r.g).forEach(d => { if (q > 0) q -= dealDeliver(s, d, Math.min(q, d.qty - d.got), t.unit, r); });
+          if (r.dest === 'wh' && co.wh[r.to] && q > 0) {
+            const w = co.wh[r.to], room = Math.min(q, whFree(w));
+            stockAdd(w, r.g, room, t.unit); q -= room;
+          }
+          if (q > 0) {
+            const qt = coTrade(s, r.to, r.g, q, 'sell');
+            s.cash += qt.total; co.autoSold += qt.total; s.st.trades++; s.st.maxSale = Math.max(s.st.maxSale, qt.total);
+            s.st.bestTrade = Math.max(s.st.bestTrade, qt.total - t.unit * q); addSold(s, r.to, r.g, q);
+            r.sold += qt.total; r.profit += qt.total - t.unit * q; rep.sold += qt.total; rep.profit += qt.total - t.unit * q;
+            coLog(s, 'Freight sold ' + q + ' t ' + GOODS[r.g].name.toLowerCase() + ' in ' + PORTS[r.to].name + ' for ' + rm(qt.total) + '.', 'good');
+          } else coLog(s, 'Freight delivered ' + t.q + ' t ' + GOODS[r.g].name.toLowerCase() + ' to ' + PORTS[r.to].name + '.', 'co');
         }
-        if (q > 0) {
-          const qt = coTrade(s, r.to, r.g, q, 'sell');
-          s.cash += qt.total; co.autoSold += qt.total; s.st.trades++; s.st.maxSale = Math.max(s.st.maxSale, qt.total);
-          s.st.bestTrade = Math.max(s.st.bestTrade, qt.total - t.unit * q); addSold(s, r.to, r.g, q);
-          coLog(s, 'Freight sold ' + q + ' t ' + GOODS[r.g].name.toLowerCase() + ' in ' + PORTS[r.to].name + ' for ' + rm(qt.total) + '.', 'good');
-        } else coLog(s, 'Freight delivered ' + t.q + ' t ' + GOODS[r.g].name.toLowerCase() + ' to ' + PORTS[r.to].name + '.', 'co');
       }
-      if (!r.trip && !r.paused) {
+      if (!r.trip && !r.paused && !strikeAt(s, r.from)) {
         const w = co.wh[r.from]; if (!w) return;
         const have = (w.stock[r.g] || {}).q || 0;
         const q = Math.min(r.qty, have);
@@ -1459,22 +1500,173 @@
         if (spendable(s) < rq.cost) return;
         const unit = w.stock[r.g].cost;
         stockTake(w, r.g, q); s.cash -= rq.cost; s.st.costs += rq.cost;
+        r.freight += rq.cost; rep.freight += rq.cost; rep.shipped += q;
         r.trip = { q, unit: unit + rq.cost / q, depart: s.day, arrive: s.day + rq.days };
       }
     });
-    // 5. contracts delivered straight from a warehouse at the destination
+    // 5. contracts and big orders delivered straight from a warehouse at the destination
     for (const k of s.contracts.slice()) {
       const w = co.wh[k.dest], c = w && w.stock[k.good];
-      if (c && c.q >= k.qty && s.day <= k.deadline) {
-        const pay = k.qty * k.pay;
+      if (c && c.q >= k.qty && s.day <= k.deadline && !strikeAt(s, k.dest)) {
+        const pay = k.qty * k.pay, basis = c.cost * k.qty;
         stockTake(w, k.good, k.qty); addSold(s, k.dest, k.good, k.qty);
         s.cash += pay; s.st.contracts++; s.st.contractPay += pay;
         s.contracts.splice(s.contracts.indexOf(k), 1);
-        coLog(s, 'Warehouse ' + PORTS[k.dest].name + ' delivered the contract: ' + k.qty + ' t ' + GOODS[k.good].name.toLowerCase() + ' for ' + rm(pay) + '.', 'good');
+        plSale(co, w.pl, pay, basis); rep.delivered += k.qty;
+        const msg = 'Warehouse ' + PORTS[k.dest].name + ' delivered the contract: ' + k.qty + ' t ' + GOODS[k.good].name.toLowerCase() + ' for ' + rm(pay) + '.';
+        coLog(s, msg, 'good'); repNote(s, msg);
       }
+    }
+    for (const d of co.deals.slice()) {
+      const w = co.wh[d.port], c = w && w.stock[d.g];
+      if (!c || strikeAt(s, d.port)) continue;
+      const q = Math.min(c.q, d.qty - d.got), unit = c.cost;
+      if (q <= 0) continue;
+      stockTake(w, d.g, q);
+      dealDeliver(s, d, q, unit, w.pl);
     }
     // 6. your warehouses report live prices
     ports.forEach(p => snapshot(s, p));
+  }
+  /* ---- Profit, reports ---- */
+  function newRep(day) { return { from: day, bought: 0, sold: 0, profit: 0, made: 0, shipped: 0, delivered: 0, upkeep: 0, fees: 0, freight: 0, notes: [] }; }
+  function repNote(s, text) { const r = s.co.rep; if (r.notes[r.notes.length - 1] === text) return; r.notes.push(text); if (r.notes.length > 8) r.notes.shift(); }
+  function plSale(co, pl, rev, basis) { if (pl) { pl.sold += rev; pl.profit += rev - basis; } co.rep.sold += rev; co.rep.profit += rev - basis; }
+  function repActive(r) { return !!(r && (r.bought || r.sold || r.made || r.shipped || r.delivered || r.notes.length)); }
+  // Fill fields added after a company was first saved (older saves, new buildings).
+  function coFill(co) {
+    if (!co.rep) co.rep = newRep(1);
+    if (!Array.isArray(co.deals)) co.deals = [];
+    if (co.dealOffer === undefined) co.dealOffer = null;
+    if (!Array.isArray(co.alerts)) co.alerts = [];
+    ['nextDeal', 'dealsDone', 'nextAlert'].forEach(k => { if (co[k] == null) co[k] = 0; });
+    Object.values(co.wh).forEach(w => { if (!w.pl) w.pl = { bought: 0, sold: 0, profit: 0, upkeep: 0 }; });
+    Object.values(co.fac).forEach(f => { ['added', 'upkeep', 'downUntil', 'otUntil'].forEach(k => { if (f[k] == null) f[k] = 0; }); });
+    co.routes.forEach(r => { ['sold', 'profit', 'freight'].forEach(k => { if (r[k] == null) r[k] = 0; }); });
+    return co;
+  }
+  // The company report since you last docked: handed to the arrival card, then started again.
+  function takeCoReport(s) {
+    const co = s.co; if (!co) return null;
+    coFill(co);
+    const r = co.rep; co.rep = newRep(s.day);
+    r.to = s.day; r.decide = co.alerts.filter(a => alertOpen(s, a)).length;
+    return repActive(r) || r.decide ? r : null;
+  }
+  /* ---- Big company orders ---- */
+  const DEAL_QTY = { food: [250, 450], tyres: [150, 300], coffeemix: [60, 120], machinery: [10, 25] };
+  function makeDeal(s) {
+    const L = s.rngL, co = s.co;
+    const pool = Object.keys(RECIPES).filter(g => s.goods.indexOf(g) >= 0);
+    const mine = Object.values(co.fac).map(f => f.recipe).filter(g => pool.indexOf(g) >= 0);
+    const r1 = rnd(L), r2 = rnd(L), r3 = rnd(L), r4 = rnd(L), r5 = rnd(L), r6 = rnd(L);
+    const g = mine.length && r1 < 0.7 ? mine[Math.floor(r2 * mine.length)] : pool[Math.floor(r2 * pool.length)];
+    const best = s.ports.slice().sort((a, b) => PF[b][g] - PF[a][g] || (a < b ? -1 : 1)).slice(0, 4);
+    const port = best[Math.floor(r3 * best.length)];
+    const [lo, hi] = DEAL_QTY[g], step = hi >= 100 ? 10 : 5;
+    const qty = Math.round((lo + r4 * (hi - lo)) / step) * step;
+    const cap = RECIPES[g].batches * RECIPES[g].out;
+    const need = Math.ceil(qty / cap);
+    const deadline = Math.min(s.maxDays - 1, s.day + need + 10 + Math.floor(r5 * 7));
+    if (deadline - s.day < need + 6) return null;
+    const unit = Math.round(GOODS[g].base * PF[port][g] * (1.06 + r6 * 0.1));
+    const bonus = niceGoal(qty * unit * 0.15);
+    return { id: ++co.seq, g, qty, got: 0, port, deadline, unit, bonus, paid: 0, expires: s.day + 5 };
+  }
+  function dealsTick(s) {
+    const co = s.co;
+    for (const d of co.deals.slice()) {
+      if (s.day > d.deadline) {
+        co.deals.splice(co.deals.indexOf(d), 1);
+        const msg = 'Big order for ' + GOODS[d.g].name.toLowerCase() + ' in ' + PORTS[d.port].name + ' expired: ' + fmtN(d.got) + ' of ' + fmtN(d.qty) + ' t delivered, no bonus.';
+        coLog(s, msg, 'bad'); repNote(s, msg);
+      }
+    }
+    if (co.dealOffer && s.day > co.dealOffer.expires) co.dealOffer = null;
+    if (coStage(s) >= 2 && Object.keys(co.fac).length && !co.dealOffer && co.deals.length < 2 && s.day >= co.nextDeal) {
+      co.nextDeal = s.day + rInt(s.rngL, 8, 12);
+      co.dealOffer = makeDeal(s);
+      if (co.dealOffer) { const d = co.dealOffer; addNews(s, { kind: 'deal', text: 'Big order offered: ' + fmtN(d.qty) + ' t ' + GOODS[d.g].name.toLowerCase() + ' to ' + PORTS[d.port].name + ' by day ' + d.deadline + '. See the Company tab.', port: d.port, good: d.g }); repNote(s, 'A big order is on offer in the Company tab.'); }
+    }
+  }
+  function acceptDeal(s) {
+    const co = s.co, d = co && co.dealOffer;
+    if (!d) return fail('No order on offer');
+    if (co.deals.length >= 2) return fail('You can run two big orders at a time');
+    co.dealOffer = null; co.deals.push(d);
+    coLog(s, 'Big order accepted: ' + d.qty + ' t ' + GOODS[d.g].name.toLowerCase() + ' to ' + PORTS[d.port].name + ' by day ' + d.deadline + '.', 'co');
+    return { ok: true };
+  }
+  function declineDeal(s) { if (!s.co || !s.co.dealOffer) return fail('No order on offer'); s.co.dealOffer = null; return { ok: true }; }
+  // Deliver q t to a big order; unitCost is the cost basis per tonne, pl the business that delivered (or null for your ship).
+  function dealDeliver(s, d, q, unitCost, pl) {
+    const co = s.co;
+    q = Math.min(q, d.qty - d.got); if (q <= 0) return 0;
+    const pay = Math.round(q * d.unit);
+    d.got += q; d.paid += pay; s.cash += pay; s.st.trades++;
+    s.st.maxSale = Math.max(s.st.maxSale, pay);
+    plSale(co, pl, pay, unitCost * q); co.rep.delivered += q;
+    if (d.got >= d.qty) {
+      s.cash += d.bonus; co.dealsDone++; plSale(co, pl, d.bonus, 0);
+      co.deals.splice(co.deals.indexOf(d), 1);
+      const msg = 'Big order complete: ' + fmtN(d.qty) + ' t ' + GOODS[d.g].name.toLowerCase() + ' delivered to ' + PORTS[d.port].name + '. Bonus ' + rm(d.bonus) + '.';
+      coLog(s, msg, 'good'); repNote(s, msg);
+    }
+    return q;
+  }
+  /* ---- Company alerts: strikes, breakdowns, booms ---- */
+  function strikeAt(s, p) { return !!s.co && s.co.alerts.some(a => a.kind === 'strike' && a.p === p && a.choice !== 'settle' && s.day >= a.day && s.day <= a.end); }
+  function alertOpen(s, a) { return a.choice === null && a.choices.length > 0 && s.day <= a.end; }
+  function stockValue(w) { let v = 0; for (const g in w.stock) v += w.stock[g].q * w.stock[g].cost; return v; }
+  function alertsTick(s) {
+    const co = s.co, L = s.rngL;
+    co.alerts = co.alerts.filter(a => s.day <= a.end + 4);
+    const whs = Object.keys(co.wh), facs = Object.keys(co.fac);
+    if (!whs.length || s.day < co.nextAlert || s.day >= s.maxDays - 2) return;
+    const roll = rnd(L), k1 = rnd(L), k2 = rnd(L), k3 = rnd(L), k4 = rnd(L);
+    if (roll > 0.045 || co.alerts.some(a => alertOpen(s, a))) return;
+    const kinds = ['strike']; if (facs.length) kinds.push('breakdown', 'boom');
+    const kind = kinds[Math.floor(k1 * kinds.length)];
+    const a = { id: ++co.seq, kind, p: null, g: null, day: s.day, end: s.day, cost: 0, text: '', choices: [], choice: null };
+    if (kind === 'strike') {
+      const p = whs[Math.floor(k2 * whs.length)];
+      a.p = p; a.end = s.day + 2 + Math.floor(k3 * 3);
+      a.cost = Math.max(10000, niceGoal(12000 + stockValue(co.wh[p]) * 0.03));
+      a.text = 'Dockers strike at ' + PORTS[p].name + '. Your warehouse there cannot load, unload, buy or sell until day ' + (a.end + 1) + '.';
+      a.choices = [{ id: 'settle', label: 'Pay the dockers ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait it out', cost: 0 }];
+    } else if (kind === 'breakdown') {
+      const p = facs[Math.floor(k2 * facs.length)], f = co.fac[p];
+      a.p = p; a.end = s.day + 4; f.downUntil = a.end;
+      a.cost = niceGoal(CO.facCost * 0.2 * f.lvl);
+      a.text = 'Your ' + RECIPES[f.recipe].name.toLowerCase() + ' in ' + PORTS[p].name + ' has broken down. Spare parts arrive on day ' + (a.end + 1) + '.';
+      a.choices = [{ id: 'repair', label: 'Repair now · ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait for the parts', cost: 0 }];
+    } else {
+      const g = co.fac[facs[Math.floor(k2 * facs.length)]].recipe;
+      const best = s.ports.slice().sort((x, y) => PF[y][g] - PF[x][g] || (x < y ? -1 : 1)).slice(0, 3);
+      const p = best[Math.floor(k3 * best.length)];
+      a.p = p; a.g = g; a.end = s.day + 5 + Math.floor(k4 * 4);
+      const mult = 1.3 + k4 * 0.15;
+      const e = { id: ++s.seq, scope: 'local', port: p, good: g, kind: 'shortage', mult, start: s.day, end: a.end, headline: GOODS[g].name + ' sells out in ' + PORTS[p].name + ': buyers pay a premium', rumoured: false, announced: true };
+      s.events.push(e);
+      addNews(s, { kind: 'shortage', text: e.headline, port: p, good: g, ev: e.id, end: e.end });
+      a.text = 'Demand for ' + GOODS[g].name.toLowerCase() + ' booms in ' + PORTS[p].name + ': prices about ' + Math.round((mult - 1) * 100) + '% higher until day ' + a.end + '.';
+      a.choices = [{ id: 'overtime', label: 'Run overtime: double output, fees +50%', cost: 0 }, { id: 'normal', label: 'Business as usual', cost: 0 }];
+    }
+    co.alerts.push(a); co.nextAlert = s.day + 6 + Math.floor(k4 * 5);
+    coLog(s, a.text, kind === 'boom' ? 'good' : 'bad'); repNote(s, a.text);
+  }
+  function coChoose(s, id, cid) {
+    const co = s.co; if (!co || s.phase === 'ended') return fail('Not now');
+    const a = co.alerts.find(x => x.id === id); if (!a) return fail('That is over');
+    if (!alertOpen(s, a)) return fail('Already decided');
+    const c = a.choices.find(x => x.id === cid); if (!c) return fail('Unknown choice');
+    if (c.cost) { if (s.cash < c.cost) return fail('Not enough cash'); s.cash -= c.cost; s.st.costs += c.cost; }
+    a.choice = cid;
+    if (cid === 'repair' && co.fac[a.p]) { co.fac[a.p].downUntil = s.day - 1; co.fac[a.p].note = 'Repaired'; }
+    if (cid === 'overtime') Object.values(co.fac).forEach(f => { if (f.recipe === a.g) f.otUntil = a.end; });
+    if (cid === 'settle') coLog(s, 'The strike at ' + PORTS[a.p].name + ' is over.', 'good');
+    afterChange(s);
+    return { ok: true };
   }
   function coValue(s, atCost) {
     const co = s.co; if (!co) return 0;
@@ -1564,7 +1756,7 @@
         const keys = Object.keys(d.best).sort();
         while (keys.length > 60) { const k = keys.shift(); delete d.best[k]; delete d.plays[k]; }
       }
-      if (rewardEligible && s.mode === 'normal' && s.level === meta.levelMax && rank >= MERCHANT_RANK && meta.levelMax < 10) { meta.levelMax++; f.levelUp = meta.levelMax; }
+      if (rewardEligible && s.mode === 'normal' && s.level === meta.levelMax && nw >= levelGoal(s) && meta.levelMax < 10) { meta.levelMax++; f.levelUp = meta.levelMax; }
       f.lp = base + f.streakBonus + f.rivalLP + f.bountyLP;
       meta.lp += f.lp; meta.lpTotal += f.lp;
       meta.history.unshift({ t: Date.now(), mode: s.mode, date: s.dateKey, captain: s.captain, level: s.level, nw, rank, twist: s.twist });
@@ -1811,6 +2003,24 @@
     saveRequire(saveRecord(co) && saveRecord(co.wh) && saveRecord(co.fac) && Array.isArray(co.routes));
     saveNumbers(co, ['reserve', 'seq', 'made', 'trips', 'autoBought', 'autoSold', 'upkeep', 'built']);
     saveRequire(co.reserve >= 0 && co.routes.length <= CO.routeMax);
+    saveRequire(Object.values(co.wh).every(saveRecord) && Object.values(co.fac).every(saveRecord) && co.routes.every(saveRecord));
+    coFill(co);
+    saveNumbers(co, ['nextDeal', 'dealsDone', 'nextAlert']);
+    saveRequire(saveRecord(co.rep) && Array.isArray(co.rep.notes) && co.rep.notes.length <= 8 && co.rep.notes.every(n => typeof n === 'string'));
+    saveNumbers(co.rep, ['from', 'bought', 'sold', 'profit', 'made', 'shipped', 'delivered', 'upkeep', 'fees', 'freight']);
+    const dealOk = d => { saveRequire(saveRecord(d) && saveHas(RECIPES, d.g) && s.goods.includes(d.g) && s.ports.includes(d.port)); saveNumbers(d, ['id', 'qty', 'got', 'deadline', 'unit', 'bonus', 'paid', 'expires']); saveRequire(d.qty > 0 && d.got >= 0 && d.got < d.qty); };
+    saveRequire(Array.isArray(co.deals) && co.deals.length <= 2); co.deals.forEach(dealOk);
+    if (co.dealOffer !== null) dealOk(co.dealOffer);
+    saveRequire(Array.isArray(co.alerts) && co.alerts.length <= 12);
+    co.alerts.forEach(a => {
+      saveRequire(saveRecord(a) && ['strike', 'breakdown', 'boom'].includes(a.kind) && typeof a.text === 'string' && Array.isArray(a.choices) && a.choices.length <= 2 && (a.choice === null || typeof a.choice === 'string'));
+      saveRequire(a.p === null || s.ports.includes(a.p)); saveRequire(a.g === null || s.goods.includes(a.g));
+      saveNumbers(a, ['id', 'day', 'end', 'cost']);
+      a.choices.forEach(c => { saveRequire(saveRecord(c) && typeof c.id === 'string' && typeof c.label === 'string'); saveNumbers(c, ['cost']); });
+    });
+    Object.values(co.wh).forEach(w => { saveRequire(saveRecord(w.pl)); saveNumbers(w.pl, ['bought', 'sold', 'profit', 'upkeep']); });
+    Object.values(co.fac).forEach(f => saveNumbers(f, ['added', 'upkeep', 'downUntil', 'otUntil']));
+    co.routes.forEach(r => saveNumbers(r, ['sold', 'profit', 'freight']));
     Object.keys(co.wh).forEach(p => {
       const w = co.wh[p];
       saveRequire(s.ports.includes(p) && saveRecord(w) && Number.isInteger(w.lvl) && w.lvl >= 1 && w.lvl <= CO.whMaxLvl && Number.isFinite(w.invest) && saveRecord(w.stock) && Array.isArray(w.orders) && w.orders.length <= CO.orderMax);
@@ -1868,7 +2078,7 @@
     waitDay, endSeason, rankFor, seasonLP, checkAch, unlock, dayKeyShift,
     knownSell, bestKnownSell, bestKnownBuy, marketRows, portProfile, newsFeed, upcomingDeadlines, cargoRows,
     serialize, deserialize, deserializeMeta, canAct,
-    STAGES, CO, RECIPES, ORDER_MODES, coStage, nextStage, whUsed, whCap, whFree, buildWarehouse, upgradeWarehouse, storeCargo, takeCargo, setOrder, removeOrder,
+    SEASON_DAYS, levelGoal, niceGoal, acceptDeal, declineDeal, coChoose, strikeAt, alertOpen, repActive, takeCoReport, STAGES, CO, RECIPES, ORDER_MODES, coStage, nextStage, whUsed, whCap, whFree, buildWarehouse, upgradeWarehouse, storeCargo, takeCargo, setOrder, removeOrder,
     buildFactory, upgradeFactory, addRoute, removeRoute, pauseRoute, setReserve, routeQuote, freightDays, coValue, coDaily, coSummary, vsAvg, quoteBuyAt, quoteSellAt,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = MM;
