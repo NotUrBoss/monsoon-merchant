@@ -338,7 +338,7 @@ def v2_migration_journey(page, context, url, out):
         assert migrated[key]==original[key]
     assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
     page.wait_for_function('navigator.serviceWorker.controller !== null')
-    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.3.0');return (await c.keys()).map(r=>r.url);}''')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.3.1');return (await c.keys()).map(r=>r.url);}''')
     assert any(x.endswith('/company-actions.js') for x in cached)
     assert any(x.endswith('/company-play.js') for x in cached)
     assert all(any(x.endswith('/' + n) for x in cached) for n in ('art.js', 'pixel.js', 'sfx.js'))
@@ -530,6 +530,104 @@ def endless_and_layers_journey(page, context, url, out):
     assert page.evaluate("JSON.parse(localStorage.getItem('mm.meta.v1')).endless.runs") == 1
     page.screenshot(path=str(out/'retired.png'))
 
+GEO = '''() => {
+  const sc = document.querySelector('#screen .scroll');
+  const rows = [...document.querySelectorAll('#screen .goods .good')].map(e => { const r = e.getBoundingClientRect(); return { g: e.dataset.g, top: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width) }; });
+  const hud = document.querySelector('#screen .hud'), tabs = document.querySelector('#screen .tabs');
+  return { rows, hud: hud ? Math.round(hud.getBoundingClientRect().top) : null, tabsBottom: tabs ? Math.round(tabs.getBoundingClientRect().bottom) : null,
+    H: innerHeight, W: innerWidth, docW: document.documentElement.scrollWidth, overlay: document.getElementById('overlay').className,
+    inert: !!document.getElementById('screen').inert, toasts: document.getElementById('toasts').children.length, scroll: sc ? sc.scrollTop : 0 };
+}'''
+
+def trade_layout_journey(page, context, url, out):
+    # Buying and selling must not move the list, the bars or the traded row, on phones, tablets and desktops.
+    for width, height in ((1440, 900), (1280, 640), (820, 1180), (390, 844), (320, 568)):
+        page.set_viewport_size({'width': width, 'height': height})
+        page.goto(url, wait_until='networkidle')
+        page.evaluate("() => { localStorage.removeItem('mm.run.normal.v1'); }")
+        page.reload(wait_until='networkidle')
+        act(page, 'new-season'); act(page, 'start-season')
+        page.evaluate("document.querySelector('#screen .scroll').scrollTop = 99999")
+        page.wait_for_timeout(100)
+        before = page.evaluate(GEO)
+        g = before['rows'][2]['g']
+        for mode in ('buy', 'sell'):
+            page.locator(f'#screen [data-a="trade"][data-g="{g}"]').click()
+            assert page.locator('#overlay .sheet.trade').count() == 1
+            page.wait_for_timeout(300)
+            before = page.evaluate(GEO)  # the click may scroll the row into view first
+            assert page.locator('.sheet [data-a="do-trade"]').is_visible(), 'the trade button is on screen'
+            box = page.locator('.sheet [data-a="do-trade"]').bounding_box()
+            assert box and box['y'] + box['height'] <= height + 1, (width, height, mode, 'trade button below the screen', box)
+            if mode == 'buy':
+                page.locator('.sheet [data-a="qty-set"]').last.click()
+            page.locator('.sheet [data-a="do-trade"]').click()
+            page.wait_for_timeout(400)
+            after = page.evaluate(GEO)
+            label = f'{width}x{height} {mode}'
+            assert after['overlay'] == '' and not after['inert'], label + ': the sheet closed and the screen is usable'
+            assert after['docW'] <= after['W'] + 1, label + ': no sideways scroll'
+            assert after['hud'] == before['hud'] and after['tabsBottom'] == before['tabsBottom'] == after['H'], (label, before, after)
+            row_b = next(r for r in before['rows'] if r['g'] == g); row_a = next(r for r in after['rows'] if r['g'] == g)
+            assert abs(row_a['top'] - row_b['top']) <= 2, (label, 'traded row moved', row_b, row_a)
+            assert [(r['h'], r['w']) for r in after['rows']] == [(r['h'], r['w']) for r in before['rows']], (label, 'row sizes changed', before['rows'], after['rows'])
+            assert after['toasts'] == 0, label + ': no toast covers the list'
+            assert page.locator(f'#screen [data-a="trade"][data-g="{g}"] .done-line').count() == 1, label + ': the row says what happened'
+            page.screenshot(path=str(out/f'{width}x{height}-{mode}.png'))
+
+AUDIT = '''() => {
+  const W = innerWidth, H = innerHeight, out = [];
+  if (document.documentElement.scrollWidth > W + 1) out.push('sideways scroll ' + document.documentElement.scrollWidth);
+  const open = document.getElementById('overlay').classList.contains('open');
+  const layer = open ? document.querySelector('#overlay [role="dialog"]') : document.getElementById('screen');
+  if (!layer) return ['no visible layer'];
+  const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
+  [...layer.querySelectorAll('button, [data-a]')].filter(vis).forEach(e => {
+    if (e.closest('.seg, .chips, .pxmap, .map-box')) return;
+    const r = e.getBoundingClientRect();
+    if (r.right > W + 1 || r.left < -1) out.push('off-screen ' + (e.dataset.a || e.className));
+  });
+  const tabs = document.querySelector('#screen .tabs');
+  if (tabs && !open && Math.abs(tabs.getBoundingClientRect().bottom - H) > 2) out.push('tab bar moved');
+  return out;
+}'''
+
+def all_screens_journey(page, context, url, out):
+    # Visit every screen, tab and sheet on a phone and a laptop; nothing scrolls sideways or leaves the screen.
+    for width, height in ((390, 844), (1366, 768)):
+        page.set_viewport_size({'width': width, 'height': height})
+        page.goto(url, wait_until='networkidle')
+        page.evaluate("() => { localStorage.removeItem('mm.run.normal.v1'); }")
+        page.reload(wait_until='networkidle')
+        seen = []
+        def check(name):
+            page.wait_for_timeout(80)
+            issues = page.evaluate(AUDIT)
+            assert issues == [], (width, name, issues)
+            seen.append(name)
+        def do(a, **d):
+            page.evaluate('([a, d]) => window.__mm.A[a](d)', [a, d])
+        check('title')
+        for a in ('settings', 'help', 'legacy', 'ledger'):
+            do(a); check(a); do('go-title')
+        act(page, 'new-season'); check('setup')
+        act(page, 'pick-days', id='endless'); check('setup-endless'); act(page, 'pick-days', id='90')
+        act(page, 'start-season'); check('market')
+        page.evaluate("() => { const r = window.__mm.run; r.cash += 14e6; r.st.peak = 14e6; }")
+        for t in ('market', 'map', 'ship', 'office', 'company'):
+            act(page, 'tab', id=t); check('tab-' + t)
+        for st in ('sites', 'freight', 'overview'):
+            act(page, 'co-tab', id=st); check('company-' + st)
+        act(page, 'co-tab', id='sites'); act(page, 'wh-build')
+        for a, d, name in (('order-new', {'p': 'klang'}, 'order'), ('fac-sheet', {}, 'factory'), ('est-sheet', {}, 'estate'), ('mgr-sheet', {}, 'manager'),
+                           ('route-new', {}, 'route'), ('rival-info', {}, 'rival'), ('season-info', {}, 'season'), ('menu', {}, 'menu'),
+                           ('port', {'p': 'singapore'}, 'port'), ('plan', {'p': 'singapore'}, 'depart'), ('trade', {'g': 'rice'}, 'trade')):
+            do(a, **d); check('sheet-' + name); do('close-sheet')
+        act(page, 'tab', id='market'); act(page, 'menu'); act(page, 'end-early'); page.locator('.sheet .btn.danger-fill').click()
+        page.wait_for_timeout(300); check('end')
+        page.screenshot(path=str(out/f'end-{width}.png'))
+        assert len(seen) >= 28, seen
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',default='/tmp/mm-browser-evidence')
@@ -546,7 +644,7 @@ def main():
             for engine in args.browsers:
                 browser=getattr(playwright,engine).launch(headless=True, **({'executable_path':os.environ['MM_CHROMIUM_PATH']} if engine=='chromium' and os.environ.get('MM_CHROMIUM_PATH') else {}))
                 try:
-                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey),('endless-and-layers',endless_and_layers_journey)]:
+                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey),('endless-and-layers',endless_and_layers_journey),('trade-layout-stability',trade_layout_journey),('all-screens',all_screens_journey)]:
                         if args.only and name not in args.only: continue
                         directory=output/engine/name;directory.mkdir(parents=True,exist_ok=True)
                         context=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
