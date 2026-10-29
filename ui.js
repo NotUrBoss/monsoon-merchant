@@ -1,7 +1,7 @@
 /* Monsoon Merchant — user interface. */
 (function () {
   'use strict';
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.3.1';
   const MAP = window.MAP;
   const rm = MM.rm;
   const root = document.getElementById('app');
@@ -129,13 +129,30 @@
     if (list.length === 1) toast('Achievement: ' + list[0].name + ' · +' + list[0].lp + ' Legacy', 'ach');
     else toast(list.length + ' achievements: ' + list.map(a => a.name).join(', ') + ' · +' + list.reduce((n, a) => n + a.lp, 0) + ' Legacy', 'ach');
   }
+  // Money gained or lost rises from the Cash box in the HUD, so it never covers the list.
   function floatText(text, good) {
-    const host = root;
     const el = document.createElement('div');
     el.className = 'floater ' + (good ? 'pos' : 'neg');
+    el.setAttribute('aria-hidden', 'true');
     el.textContent = text;
-    host.appendChild(el);
+    const cash = document.querySelector('#screen .stat.cash');
+    if (cash) { const r = cash.getBoundingClientRect(); el.style.left = Math.round(r.left + r.width / 2) + 'px'; el.style.top = Math.round(r.bottom + 4) + 'px'; el.classList.add('at-hud'); }
+    root.appendChild(el);
     setTimeout(() => el.remove(), 1500);
+  }
+  // Tell screen readers what happened without a visible toast.
+  function announce(text) {
+    let el = document.getElementById('sr-live');
+    if (!el) { el = document.createElement('div'); el.id = 'sr-live'; el.className = 'sr-only'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite'); root.appendChild(el); }
+    el.textContent = ''; setTimeout(() => { el.textContent = text; }, 30);
+  }
+  // A traded row flashes and briefly shows what was done, in place of a toast over the list.
+  function flashRow(sel, text, good) {
+    const row = document.querySelector('#screen ' + sel);
+    if (!row) return;
+    row.classList.add('flash', good ? 'flash-pos' : 'flash-neg');
+    const sub = row.querySelector('.holdline, .best');
+    if (sub && text) { sub.textContent = text; sub.classList.add('done-line'); }
   }
 
   /* ================= Tips ================= */
@@ -774,10 +791,10 @@
     const logs = s.log.filter(l => l.day > v.startDay).slice(0, 5);
     return '<div class="screen sea">' + hud() +
       '<div class="sea-view">' + sceneHTML('sea', { ship: s.ship.cls, mode: 'sail', event: s.pending ? s.pending.type : null, rival: true, speed: UI.sea.fast ? 2 : 1 }, 'sea-scene') +
-      '<div class="voyage-pill"><b>' + esc(pShort(v.from)) + ' » ' + esc(pShort(v.to)) + '</b><span>Day ' + Math.min(v.idx, v.days) + ' of ' + v.days + (v.insured ? ' · insured' : '') + '</span></div></div>' +
+      '<div class="voyage-pill"><b>' + esc(pShort(v.from)) + ' » ' + esc(pShort(v.to)) + '</b><span>Day ' + Math.min(v.idx, v.days) + ' of ' + v.days + (v.insured ? ' · insured' : '') + '</span></div>' + tip('sea') + '</div>' +
       '<div class="sea-bottom"><div class="sea-mini">' + mapHTML('sea', Object.assign({ route: { from: v.from, to: v.to }, ship: true, frac: UI.sea.frac, locked: lockedPorts(s), wind: s.monsoon.phase, labels: false }, coMapOpts(s))) + '</div>' +
-      '<div class="sea-side"><ul class="sealog">' + (logs.length ? logs.map(l => '<li class="' + l.kind + '"><small>Day ' + l.day + '</small><span>' + esc(l.text) + '</span></li>').join('') : '<li class="calm"><span>Fair winds. The crew settle into watches.</span></li>') + '</ul>' +
-      '<button class="btn ghost sm ' + (UI.sea.fast ? 'on' : '') + '" data-a="sea-fast">' + I.fast + '<span>' + (UI.sea.fast ? 'Fast' : 'Normal') + '</span></button></div></div>' + tip('sea') + '</div>';
+      '<div class="sea-side"><button class="btn ghost sm ' + (UI.sea.fast ? 'on' : '') + '" data-a="sea-fast" aria-pressed="' + !!UI.sea.fast + '">' + I.fast + '<span>Speed: ' + (UI.sea.fast ? 'fast' : 'normal') + '</span></button>' +
+      '<ul class="sealog">' + (logs.length ? logs.map(l => '<li class="' + l.kind + '"><small>Day ' + l.day + '</small><span>' + esc(l.text) + '</span></li>').join('') : '<li class="calm"><span>Fair winds. The crew settle into watches.</span></li>') + '</ul></div></div></div>';
   }
   function sparkline(hist, w, h) {
     if (!hist || hist.length < 2) return '';
@@ -1165,6 +1182,7 @@
     root.classList.toggle('reduce-motion', reduceMotion());
     const sc = document.querySelector('#screen .scroll');
     if (sc) UI.scroll[UI.renderedKey] = sc.scrollTop;
+    const anchor = sc ? scrollAnchor(sc) : null;
     if (UI.screen === 'run' && UI.tab === 'office' && run) {
       const maxId = run.news.reduce((a, n) => Math.max(a, n.day <= run.day ? n.id : 0), 0);
       if (maxId > UI.seenNews) { UI.prevSeen = UI.seenNews; UI.seenNews = maxId; try { sessionStorage.setItem('mm.seen', String(maxId)); } catch (e) { /* ignore */ } }
@@ -1185,9 +1203,28 @@
     UI.renderedKey = UI.screen + ':' + (UI.screen === 'run' ? UI.tab : '');
     const nsc = document.querySelector('#screen .scroll');
     if (nsc && UI.scroll[UI.renderedKey]) nsc.scrollTop = UI.scroll[UI.renderedKey];
+    if (nsc && anchor && oldKey === UI.renderedKey) keepAnchor(nsc, anchor);
     renderOverlay(screenFocus);
     if (!document.getElementById('overlay').classList.contains('open') && (screenHadFocus || (oldKey && oldKey !== UI.renderedKey))) focusWithin(screenHost, screenFocus);
     if (run && (UI.screen === 'run' || UI.screen === 'sea')) countCash();
+  }
+  // Re-rendering the same screen keeps the row you acted on (or the first visible row) exactly where it was,
+  // so a buy, sell or upgrade never makes the list jump, whatever changed above it.
+  function anchorKey(el) { return JSON.stringify(Object.assign({}, el.dataset)); }
+  function scrollAnchor(sc) {
+    const top = sc.getBoundingClientRect().top, bottom = top + sc.clientHeight;
+    const els = Array.from(sc.querySelectorAll('[data-a]'));
+    const visible = el => { const r = el.getBoundingClientRect(); return r.height > 0 && r.bottom > top && r.top < bottom; };
+    let el = null;
+    if (overlayReturnFocus && overlayReturnFocus.data) { const k = JSON.stringify(overlayReturnFocus.data); el = els.find(e => anchorKey(e) === k && visible(e)) || null; }
+    if (!el) el = els.find(e => visible(e) && e.getBoundingClientRect().top >= top) || null;
+    return el ? { key: anchorKey(el), y: el.getBoundingClientRect().top } : null;
+  }
+  function keepAnchor(sc, a) {
+    const el = Array.from(sc.querySelectorAll('[data-a]')).find(e => anchorKey(e) === a.key);
+    if (!el) return;
+    const dy = el.getBoundingClientRect().top - a.y;
+    if (Math.abs(dy) >= 1) sc.scrollTop += dy;
   }
   function countCash() {
     const el = document.getElementById('hudCash'); if (!el) return;
@@ -1316,7 +1353,7 @@
       renderOverlay(); UI.screen = 'network';
       window.MMNetworkUI.open({ root, archive: true, onExit() { UI.screen = 'title'; render(); focusWithin(document.getElementById('screen')); } });
     },
-    'go-title'() { if (run && !saveRun()) return; stopSea(); stopShip(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); },
+    'go-title'() { if (run && !saveRun()) return; stopSea(); stopShip(); run = null; UI.slot = null; UI.screen = 'title'; UI.sheet = null; UI.modal = null; render(); if (UI.swWaiting) UI.swWaiting.postMessage({ type: 'SKIP_WAITING' }); },
     continue(d) { const s = loadSlot(d.slot); if (s) enterRun(d.slot, s); else render(); },
     'new-season'() {
       UI.setup.level = Math.min(UI.setup.level, meta.levelMax);
@@ -1403,10 +1440,14 @@
       const s = run, sh = UI.sheet;
       const r = sh.mode === 'buy' ? MM.buy(s, sh.g, sh.q) : MM.sell(s, sh.g, sh.q);
       if (!r.ok) { toast(r.msg, 'bad'); Sound.error(); return; }
-      if (sh.mode === 'buy') { Sound.buy(); buzz(15); toast('Bought ' + num(r.q) + ' t ' + gName(sh.g).toLowerCase() + ' for ' + rm(r.total)); }
-      else { Sound.sell(r.profit >= 0); buzz(r.profit >= 0 ? [15, 30, 15] : 30); floatText((r.profit >= 0 ? '+' : '') + rm(r.profit), r.profit >= 0); toast('Sold ' + num(r.q) + ' t for ' + rm(r.total)); }
+      const msg = sh.mode === 'buy' ? 'Bought ' + num(r.q) + ' t ' + gName(sh.g).toLowerCase() + ' for ' + rm(r.total) : 'Sold ' + num(r.q) + ' t ' + gName(sh.g).toLowerCase() + ' for ' + rm(r.total);
+      if (sh.mode === 'buy') { Sound.buy(); buzz(15); }
+      else { Sound.sell(r.profit >= 0); buzz(r.profit >= 0 ? [15, 30, 15] : 30); }
       UI.sheet = null;
       afterAction(); render();
+      flashRow('[data-a="trade"][data-g="' + sh.g + '"]', msg, sh.mode === 'sell' ? r.profit >= 0 : true);
+      if (sh.mode === 'sell') floatText((r.profit >= 0 ? '+' : '−') + rm(Math.abs(r.profit)), r.profit >= 0);
+      announce(msg);
     },
     map(d, el, ev) {
       const mv = el._w; if (!mv) return;
@@ -1572,6 +1613,9 @@
     const el = ev.target;
     if (el && el.dataset && el.dataset.a === 'qty-range') setQty(+el.value);
   });
+  // Show focus rings only to keyboard users, so a mouse click or a tap never leaves a gold box behind.
+  document.addEventListener('keydown', ev => { const k = ev.key || ''; if (k === 'Tab' || k.startsWith('Arrow') || k === 'Enter' || k === ' ') document.documentElement.classList.add('kbd'); }, true);
+  document.addEventListener('pointerdown', () => document.documentElement.classList.remove('kbd'), true);
   root.addEventListener('keydown', ev => {
     const dialog = document.querySelector('#overlay [role="dialog"]');
     if (!dialog) return;
@@ -1601,8 +1645,11 @@
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').then(reg => {
-        const track = w => { if (!w) return; w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) { UI.swWaiting = w; if (UI.screen === 'title') render(); } }); };
-        if (reg.waiting && navigator.serviceWorker.controller) { UI.swWaiting = reg.waiting; if (UI.screen === 'title') render(); }
+        // A new version waiting while you are on the title screen (nothing in play) is applied straight away,
+        // so players are not left on an old build; mid-game it waits for the "Tap to update" banner.
+        const ready = w => { UI.swWaiting = w; if (UI.screen === 'title' && !run) { toast('Updating to the latest version…'); w.postMessage({ type: 'SKIP_WAITING' }); } else if (UI.screen === 'title') render(); };
+        const track = w => { if (!w) return; w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) ready(w); }); };
+        if (reg.waiting && navigator.serviceWorker.controller) ready(reg.waiting);
         reg.addEventListener('updatefound', () => track(reg.installing));
         setInterval(() => { reg.update().catch(() => {}); }, 60 * 60 * 1000);
       }).catch(() => { /* offline-only mode */ });
