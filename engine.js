@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '2.3.1';
+  const VERSION = '2.4.0';
   const ELASTIC = 0.5;
 
   /* ================= RNG (sfc32, serialisable state) ================= */
@@ -334,6 +334,7 @@
       settings: { sound: true, music: true, haptics: true, tips: true, motion: true },
       tips: {},
       endless: { runs: 0, best: 0, bestDay: 0, chapters: 0, hall: [] },
+      coll: { stamps: {}, cards: {}, ships: {}, sets: {} }, seen: null,
     };
   }
 
@@ -376,6 +377,7 @@
         visited: {}, sold: {}, alongUsed: false, typhoons: 0,
       },
       rival: null, bounties: [], co: newCo(),
+      cap: newCap(), quest: newQuest(), cards: {}, hag: null, hagUsed: [],
       hist: [], seq: 0, log: [],
       sunk: false, lastDay: false, final: null,
     };
@@ -413,6 +415,7 @@
     s.rival.hist = [[1, s.rival.nw]];
     s.st.visited[s.port] = true;
     genBounties(s);
+    makeQuest(s);
     snapshot(s, s.port);
     // Everyone starts the season with a free market report; after that, knowledge goes stale.
     snapshotAll(s);
@@ -443,11 +446,21 @@
   }
   function baseMid(s, p, g) { const mk = s.mk[p][g]; return GOODS[g].base * PF[p][g] * Math.exp(mk.L + s.G[g]) * evMult(s, p, g); }
   function mid(s, p, g) { return baseMid(s, p, g) * Math.exp(s.mk[p][g].I); }
-  function spreadOf(s) { let sp = s.captain === 'meiling' ? 0.03 : 0.06; if (s.level >= 7) sp += 0.02; return sp; }
+  function spreadOf(s) { let sp = s.captain === 'meiling' ? 0.03 : 0.06; if (s.level >= 7) sp += 0.02; if (hasPerk(s, 'haggler')) sp *= 0.85; return sp; }
   function buyPrice(s, p, g) { return mid(s, p, g) * (1 + spreadOf(s) / 2); }
   function sellPrice(s, p, g) { return mid(s, p, g) * (1 - spreadOf(s) / 2); }
-  function quoteBuy(s, g, q) { return quoteBuyAt(s, s.port, g, q); }
-  function quoteSell(s, g, q) { return quoteSellAt(s, s.port, g, q); }
+  // The captain's own quotes include today's haggle and any off-spec tonnes in the hold.
+  function quoteBuy(s, g, q) {
+    const qt = quoteBuyAt(s, s.port, g, q), m = hagMult(s, g, 'buy');
+    if (m !== 1) { qt.avg *= m; qt.total = Math.round(qt.avg * qt.q); qt.hag = m; }
+    return qt;
+  }
+  function quoteSell(s, g, q) {
+    const qt = quoteSellAt(s, s.port, g, q), m = hagMult(s, g, 'sell'), c = s.cargo[g];
+    const off = c && c.bad && c.q > 0 ? Math.round(Math.min(qt.q, c.q) * c.bad / c.q) : 0;
+    if (m !== 1 || off) { const unit = qt.avg * m; qt.total = Math.round(unit * qt.q - off * unit * 0.2); qt.avg = qt.q ? qt.total / qt.q : unit; qt.hag = m; qt.offSpec = off; }
+    return qt;
+  }
   function quoteBuyAt(s, p, g, q) {
     q = Math.max(0, Math.floor(q));
     const m0 = mid(s, p, g), dI = ELASTIC * q / depthT(p, g);
@@ -467,7 +480,7 @@
 
   /* ================= Cargo & worth ================= */
   function cargoUsed(s) { let t = 0; for (const g in s.cargo) t += s.cargo[g].q; return t; }
-  function shipCap(s) { return SHIPS[s.ship.cls].cap; }
+  function shipCap(s) { return Math.floor(SHIPS[s.ship.cls].cap * (hasPerk(s, 'stowage') ? 1.1 : 1)); }
   function freeSpace(s) { return Math.max(0, shipCap(s) - cargoUsed(s)); }
   function hasCold(s) { return !!(s.ship.up.cold || SHIPS[s.ship.cls].cold); }
   function shelfLife(s, g) {
@@ -484,9 +497,10 @@
   function tradeIn(s) { const sh = SHIPS[s.ship.cls]; return sh.price ? Math.round(sh.price * 0.6) : sh.tradeIn; }
   function netWorth(s) { return s.cash + cargoValue(s) + tradeIn(s) + coValue(s, false) - s.bank - s.along; }
   function netWorthCost(s) { return s.cash + cargoCostValue(s) + tradeIn(s) + coValue(s, true) - s.bank - s.along; }
-  function addCargo(s, g, q, unitCost) {
+  function addCargo(s, g, q, unitCost, bad) {
     if (q <= 0) return;
     const c = s.cargo[g] || (s.cargo[g] = { q: 0, cost: 0 });
+    if (bad > 0) c.bad = (c.bad || 0) + Math.min(q, bad);
     c.cost = (c.cost * c.q + unitCost * q) / (c.q + q);
     c.q += q;
     if (GOODS[g].perish) (c.lots = c.lots || []).push({ q, d: s.day });
@@ -494,7 +508,9 @@
   function removeCargo(s, g, q) {
     const c = s.cargo[g]; if (!c) return;
     q = Math.min(q, c.q);
+    if (c.bad) { c.bad = Math.max(0, c.bad - Math.round(q * c.bad / c.q)); if (!c.bad) delete c.bad; }
     c.q -= q;
+    if (c.bad > c.q) c.bad = c.q;
     if (c.lots) {
       let r = q;
       while (r > 0 && c.lots.length) {
@@ -512,6 +528,7 @@
     if (!s.st.m1Day && nw >= 1e6) s.st.m1Day = s.day;
     if (s.bounties) checkBounties(s, false);
     if (s.co) openOcean(s);
+    if (s.quest) questTick(s);
   }
   function log(s, text, kind) { s.log.unshift({ day: s.day, text, kind: kind || 'info' }); if (s.log.length > 60) s.log.length = 60; }
   function addNews(s, n) { n.day = s.day; n.id = ++s.seq; s.news.unshift(n); if (s.news.length > 50) s.news.length = 50; }
@@ -528,7 +545,7 @@
     while (lo < hi) { const m = (lo + hi + 1) >> 1; if (quoteBuy(s, g, m).total <= s.cash) lo = m; else hi = m - 1; }
     return lo;
   }
-  function buy(s, g, q) {
+  function buy(s, g, q, opts) {
     if (!canAct(s)) return fail('Not now');
     if (s.goods.indexOf(g) < 0) return fail('Unknown cargo');
     if (!Number.isFinite(q)) return fail('Enter a valid cargo quantity');
@@ -536,15 +553,25 @@
     if (q <= 0) return fail('Nothing to buy');
     if (q > freeSpace(s)) return fail('Not enough hold space');
     const qt = quoteBuy(s, g, q);
-    if (qt.total > s.cash) return fail('Not enough cash');
-    s.cash -= qt.total;
-    addCargo(s, g, q, qt.total / q);
+    const big = qt.total >= SURVEY_MIN, survey = big && (!!(opts && opts.survey) || hasPerk(s, 'surveyor'));
+    const fee = survey ? surveyFee(s, qt.total) : 0;
+    if (qt.total + fee > s.cash) return fail('Not enough cash');
+    s.cash -= qt.total + fee; s.st.fees += fee;
+    let bad = 0, caught = 0;
+    if (big) {
+      const G = gameRng(s), hit = rnd(G) < offSpecChance(s), share = 0.2 + rnd(G) * 0.3;
+      if (hit && survey) { caught = Math.max(1, Math.round(q * share)); cardGet(s, 'survey'); }
+      else if (hit) bad = Math.max(1, Math.round(q * share));
+    }
+    addCargo(s, g, q, qt.total / q, bad);
+    if (s.hag && s.hag.g === g && s.hag.side === 'buy') s.hag = null;
+    gainXP(s, Math.min(10, 1 + qt.total / 50000), '');
     if (s.co) { const h = s.co.here || (s.co.here = {}); h[g] = (h[g] || 0) + q; }
     s.mk[s.port][g].I += ELASTIC * q / depthT(s.port, g);
     s.st.trades++; s.st.spent += qt.total; s.st.maxMove = Math.max(s.st.maxMove, qt.move);
     snapshot(s, s.port);
     afterChange(s);
-    return { ok: true, q, total: qt.total, avg: qt.avg, move: qt.move };
+    return { ok: true, q, total: qt.total, avg: qt.avg, move: qt.move, fee, bad, caught };
   }
   function sell(s, g, q) {
     if (!canAct(s)) return fail('Not now');
@@ -566,11 +593,14 @@
     s.st.maxSale = Math.max(s.st.maxSale, qt.total);
     s.st.bestTrade = Math.max(s.st.bestTrade, profit);
     if (g === 'durian') s.st.durianSales += qt.total;
-    if (shortage && profit > 0) s.st.rumourProfit = true;
+    if (shortage && profit > 0) { s.st.rumourProfit = true; cardGet(s, 'rumour'); }
+    if (profit > 0) { cardGet(s, g); gainXP(s, clamp(profit / 2500, 2, 80), 'a profitable sale'); }
+    if (qt.total >= 1e6) cardGet(s, 'whale');
+    if (s.hag && s.hag.g === g && s.hag.side === 'sell') s.hag = null;
     addSold(s, s.port, g, q);
     snapshot(s, s.port);
     afterChange(s);
-    return { ok: true, q, total: qt.total, avg: qt.avg, profit, move: qt.move };
+    return { ok: true, q, total: qt.total, avg: qt.avg, profit, move: qt.move, offSpec: qt.offSpec || 0 };
   }
 
   /* ================= World & daily tick ================= */
@@ -724,7 +754,7 @@
         case 'rivalby': if (s.day >= P.day && b.check === undefined) { b.check = netWorth(s) > s.rival.nw; ok = b.check; bad = !ok; } break;
         case 'nodebt': bad = s.st.alongUsed; ok = atEnd && !bad; break;
       }
-      if (ok) { b.done = true; b.doneDay = s.day; got.push(b); }
+      if (ok) { b.done = true; b.doneDay = s.day; got.push(b); gainXP(s, 40, 'a bounty'); }
       else if (bad || atEnd) b.failed = true;
     });
     return got;
@@ -752,8 +782,8 @@
       log(s, 'The monsoon has turned: winds now blow from the ' + (s.monsoon.phase === 'SW' ? 'southwest' : 'northeast') + '.', 'monsoon');
     }
   }
-  function dailyCost(s) { return Math.round(SHIPS[s.ship.cls].daily * (s.level >= 1 ? 1.25 : 1) * (s.perks.crew ? 0.8 : 1)); }
-  function bankRate(s) { return 0.0025 * (s.captain === 'siti' ? 0.5 : 1) * (s.level >= 4 ? 1.5 : 1) * (s.twist === 'credit' ? 2 : 1); }
+  function dailyCost(s) { return Math.round(SHIPS[s.ship.cls].daily * (s.level >= 1 ? 1.25 : 1) * (s.perks.crew ? 0.8 : 1) * (hasPerk(s, 'purser') ? 0.85 : 1)); }
+  function bankRate(s) { return 0.0025 * (s.captain === 'siti' ? 0.5 : 1) * (s.level >= 4 ? 1.5 : 1) * (s.twist === 'credit' ? 2 : 1) * (hasPerk(s, 'banker') ? 0.7 : 1); }
   const ALONG_RATE = 0.03;
   function playerTick(s) {
     const cost = dailyCost(s);
@@ -822,6 +852,7 @@
     if (s.level >= 2) m *= 1.3;
     if (s.twist === 'typhoon') m *= 1.5;
     if (s.twist === 'calm') m *= 0.5;
+    if (hasPerk(s, 'navigator')) m *= 0.8;
     return base * m;
   }
   function pirateP(s, region) {
@@ -829,6 +860,7 @@
     let m = 0.4 + Math.min(1, cargoCostValue(s) / 250000) * 0.8;
     if (s.level >= 6) m *= 1.4;
     if (s.ship.up.security) m *= 0.6;
+    if (hasPerk(s, 'lookout')) m *= 0.75;
     if (s.twist === 'calm') m *= 2;
     return base * m;
   }
@@ -839,6 +871,7 @@
     if (prone && phaseOn(s, s.day + days) === 'SW') rate += 0.003;
     if (Math.abs(s.day - s.monsoon.shiftDay) <= 4) rate += 0.003;
     if (s.perks.insurer) rate *= 0.7;
+    if (hasPerk(s, 'underwriter')) rate *= 0.7;
     if (s.captain === 'siti') rate *= 0.6;
     return rate;
   }
@@ -1023,7 +1056,7 @@
         s.st.storms++; if (ctx.typhoon) s.st.typhoons++;
         if (choiceId === 'push') {
           const lines = [];
-          if (ctx.typhoon) s.st.typhoonPush = true;
+          if (ctx.typhoon) { s.st.typhoonPush = true; cardGet(s, 'typhoon'); }
           if (rnd(L) < founderP(s, ctx.typhoon)) { s.ship.cond = 0; s.pending = null; return sink(s); }
           if (cargoUsed(s) > 0 && rnd(L) < stormLossP(s, ctx.typhoon)) { lines.push(loseCargo(s, rRange(L, 0.1, 0.28) * (ctx.typhoon ? 1.5 : 1), 'the storm')); tone = 'bad'; }
           else if (cargoUsed(s) > 0) { lines.push('The lashings hold. Not a crate lost.'); tone = 'good'; }
@@ -1043,10 +1076,10 @@
         if (ctx.empty) { out = 'They’re gone as fast as they came.'; break; }
         if (choiceId === 'pay') { s.cash -= ctx.bribe; out = 'An envelope changes hands. The skiffs peel away.'; }
         else if (choiceId === 'run') {
-          if (rnd(L) < ctx.pRun) { s.st.escapes++; out = 'Black smoke pours from the funnel and you leave them bouncing in your wake.'; tone = 'good'; }
+          if (rnd(L) < ctx.pRun) { s.st.escapes++; cardGet(s, 'pirate'); out = 'Black smoke pours from the funnel and you leave them bouncing in your wake.'; tone = 'good'; }
           else { out = 'They catch you. ' + loseCargo(s, rRange(L, 0.2, 0.45), 'pirates'); tone = 'bad'; }
         } else {
-          if (rnd(L) < 0.7) { s.st.escapes++; out = 'Your security team fires warning flares and the skiffs think better of it.'; tone = 'good'; }
+          if (rnd(L) < 0.7) { s.st.escapes++; cardGet(s, 'pirate'); out = 'Your security team fires warning flares and the skiffs think better of it.'; tone = 'good'; }
           else { const d = damage(s, rRange(L, 5, 12)); out = 'A running fight. ' + loseCargo(s, rRange(L, 0.3, 0.5), 'pirates') + ' Hull condition −' + d + '%.'; tone = 'bad'; }
         }
         break;
@@ -1152,7 +1185,10 @@
   function arrive(s) {
     const v = s.voyage;
     s.port = v.to; s.phase = 'port'; s.voyage = null;
+    const firstVisit = !s.st.visited[s.port];
     s.st.visited[s.port] = true;
+    gainXP(s, 8 + 4 * v.days + (firstVisit ? 25 : 0), firstVisit ? 'a new port' : 'a voyage');
+    if (s.endless && s.endless.year) charterDaily(s);
     const rep = { port: s.port, day: s.day, lines: [], fee: 0, delivered: [] };
     const fee = portFee(s); s.cash -= fee; s.st.fees += fee; rep.fee = fee;
     snapshot(s, s.port);
@@ -1166,6 +1202,7 @@
         s.cash += pay; s.st.contracts++; s.st.contractPay += pay;
         s.contracts.splice(s.contracts.indexOf(k), 1);
         rep.delivered.push({ good: k.good, qty: k.qty, pay, profit: pay - basis });
+        gainXP(s, 35, 'a contract');
         log(s, 'Contract delivered: ' + k.qty + ' t ' + GOODS[k.good].name.toLowerCase() + ' for ' + rm(pay) + '.', 'good');
       } else {
         rep.lines.push('Contract here needs ' + k.qty + ' t of ' + GOODS[k.good].name.toLowerCase() + '. You have ' + (c ? c.q : 0) + ' t.');
@@ -1209,7 +1246,7 @@
       const deadline = s.day + plan.days + 4 + Math.floor(r2 * 7);
       if (s.mode !== 'endless' && deadline > s.maxDays) continue;
       const norm = GOODS[g].base * PF[d][g];
-      const pay = Math.round(norm * (1.08 + r3 * 0.22) * (s.captain === 'meiling' ? 1.12 : 1));
+      const pay = Math.round(norm * (1.08 + r3 * 0.22) * (s.captain === 'meiling' ? 1.12 : 1) * (hasPerk(s, 'broker') ? 1.08 : 1));
       const capVal = Math.min(shipCap(s) * GOODS[g].base, Math.max(60000, netWorthCost(s) * 1.2));
       let qty = Math.round((0.25 + r4 * 0.35) * capVal / GOODS[g].base / 5) * 5;
       qty = clamp(qty, 5, shipCap(s));
@@ -1313,7 +1350,7 @@
     afterChange(s);
     return { ok: true };
   }
-  function repairCost(s) { return Math.round((100 - s.ship.cond) * (250 + (SHIPS[s.ship.cls].price || 50000) * 0.0012)); }
+  function repairCost(s) { return Math.round((100 - s.ship.cond) * (250 + (SHIPS[s.ship.cls].price || 50000) * 0.0012) * (hasPerk(s, 'shipwright') ? 0.7 : 1)); }
   function repair(s) {
     if (!canAct(s)) return fail('Not now');
     if (!PORTS[s.port].yard) return fail('No shipyard here');
@@ -1336,8 +1373,9 @@
     { id: 'shop', at: 3000000, name: 'Shops', desc: 'Open shops that sell your goods to steady customers, for cash or on credit.' },
     { id: 'manager', at: 8000000, name: 'Managers', desc: 'Hire branch managers who run a port for you.' },
     { id: 'ocean', at: 10000000, name: 'Ocean lanes', desc: 'Sail and ship to Colombo, Mumbai, Dubai and Tokyo.' },
+    { id: 'overland', at: 12000000, name: 'Overland corridor', desc: 'Truck freight between Haiphong and Shenzhen through the Friendship Pass.' },
   ];
-  const STAGE = { warehouse: 1, factory: 2, freight: 3, estate: 4, shop: 5, manager: 6, ocean: 7 };
+  const STAGE = { warehouse: 1, factory: 2, freight: 3, estate: 4, shop: 5, manager: 6, ocean: 7, overland: 8 };
   const CO = { whCost: 60000, whUpCost: 50000, whCap: 400, whMaxLvl: 3, whUpkeep: 300, facCost: 150000, facUpCost: 120000, facUpkeep: 600, facBatches: 20, facMaxLvl: 2,
     routeBase: 3000, routePerTDay: 6, routeMax: 3, freightSpeed: 12, orderMax: 4, reserve: 20000, batchFee: 0.04,
     estCost: 300000, estUpCost: 250000, estUpkeep: 1500, estMaxLvl: 2, estYield: 36000, harvestCost: 0.3,
@@ -1395,6 +1433,7 @@
   function spendable(s) { return Math.max(0, s.cash - (s.co ? s.co.reserve : CO.reserve)); }
   function fmtN(n) { return Math.round(n).toLocaleString('en-US'); }
   function coLog(s, text, kind) { log(s, text, kind || 'co'); }
+  function fixMult(s) { return hasPerk(s, 'fixer') ? 0.7 : 1; }
   function needStage(s, k) { return coStage(s) >= k ? null : fail(STAGES[k].name + ' unlock at ' + rm(STAGES[k].at) + ' net worth'); }
   function routeMax(s) { return s.mode === 'endless' && s.endless ? Math.min(6, CO.routeMax + Math.floor((s.endless.ch - 1) / 2)) : CO.routeMax; }
   function freightDays(s, from, to) {
@@ -1402,7 +1441,10 @@
     r.segs.forEach(sg => { eff += sg.len * windFactor(s, sg, phaseOn(s, s.day)); });
     return Math.max(1, Math.round(eff / (CO.freightSpeed * 24)));
   }
-  function routeQuote(s, from, to, q) { const days = freightDays(s, from, to); return { days, cost: Math.round(CO.routeBase + CO.routePerTDay * q * days) }; }
+  function routeQuote(s, from, to, q, mode) {
+    if (mode === 'truck') { const days = TRUCK_LINKS[from + '|' + to] || 2; return { days, cost: Math.round((1800 + 12 * q) * freightMult(s)), truck: true }; }
+    const days = freightDays(s, from, to); return { days, cost: Math.round((CO.routeBase + CO.routePerTDay * q * days) * freightMult(s)) };
+  }
   function hereWh(s, p) { return own(s.co.wh, p) ? s.co.wh[p] : null; }
   function buildWarehouse(s) {
     if (!canAct(s)) return fail('Not now');
@@ -1636,7 +1678,10 @@
     log(s, 'Ocean lanes open. Your ships and freight can now reach Colombo, Mumbai, Dubai and Tokyo.', 'good');
   }
   /* ---- Routes ---- */
-  function addRoute(s, from, to, g, qty, dest) {
+  function addRoute(s, from, to, g, qty, dest, mode) {
+    mode = mode || 'sea';
+    if (mode !== 'sea' && mode !== 'truck') return fail('Unknown transport');
+    if (mode === 'truck') { const st = needStage(s, STAGE.overland); if (st) return st; if (!truckOK(s, from, to)) return fail('Trucks run only between Haiphong and Shenzhen'); }
     if (!coCan(s)) return fail('Not now');
     const st = needStage(s, STAGE.freight); if (st) return st;
     if (!hereWh(s, from)) return fail('Routes start at one of your warehouses');
@@ -1646,7 +1691,7 @@
     if (s.goods.indexOf(g) < 0 || GOODS[g].perish) return fail('Not this cargo');
     qty = Math.floor(qty); if (!(qty >= 10 && qty <= 200)) return fail('Choose 10 to 200 t a trip');
     if (s.co.routes.length >= routeMax(s)) return fail('Up to ' + routeMax(s) + ' routes');
-    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false, sold: 0, profit: 0, freight: 0, wait: 0 };
+    const r = { id: ++s.co.seq, from, to, g, qty, dest, trip: null, trips: 0, paused: false, sold: 0, profit: 0, freight: 0, wait: 0, mode };
     s.co.routes.push(r);
     return { ok: true, id: r.id };
   }
@@ -1786,7 +1831,8 @@
         else {
           const t = r.trip; r.trip = null; r.trips++; co.trips++;
           let q = t.q;
-          if (rnd(R) < 0.04) { const lost = Math.round(q * rRange(R, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; r.profit += pay - lost * t.unit; const msg = 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.'; coLog(s, msg, 'bad'); repNote(s, msg); }
+          if (r.mode === 'truck') cardGet(s, 'overland');
+          else if (rnd(R) < 0.04) { const lost = Math.round(q * rRange(R, 0.2, 0.4)); q -= lost; const pay = Math.round(lost * t.unit * 0.8); s.cash += pay; s.st.claims += pay; r.profit += pay - lost * t.unit; const msg = 'Freight to ' + PORTS[r.to].name + ' hit bad weather: ' + lost + ' t lost, insurer paid ' + rm(pay) + '.'; coLog(s, msg, 'bad'); repNote(s, msg); }
           // Big orders at the destination take the cargo first.
           co.deals.filter(d => d.port === r.to && d.g === r.g).forEach(d => { if (q > 0) q -= dealDeliver(s, d, Math.min(q, d.qty - d.got), t.unit, r); });
           if (r.dest === 'wh' && hereWh(s, r.to) && q > 0) {
@@ -1809,8 +1855,9 @@
         if (q <= 0) { r.wait = 0; return; }
         // Small loads wait up to three days for more stock, then go anyway.
         if (q < Math.min(10, r.qty) && q * w.stock[r.g].cost < 150000 && r.wait < 3) { r.wait++; return; }
-        const rq = routeQuote(s, r.from, r.to, q);
+        const rq = routeQuote(s, r.from, r.to, q, r.mode);
         if (spendable(s) < rq.cost) return;
+        if (r.mode === 'truck' && rnd(R) < 0.3) { const wait = rInt(R, 1, 2); rq.days += wait; coLog(s, 'Border queue at the Friendship Pass: your trucks wait ' + wait + ' more day' + (wait > 1 ? 's' : '') + '.', 'co'); }
         const unit = w.stock[r.g].cost;
         stockTake(w, r.g, q); s.cash -= rq.cost; s.st.costs += rq.cost; r.wait = 0;
         r.freight += rq.cost; rep.freight += rq.cost; rep.shipped += q;
@@ -1861,7 +1908,7 @@
       Object.values(w.stock || {}).forEach(c => { if (c.ok == null) c.ok = c.q; });
     });
     Object.values(co.fac).forEach(f => { ['added', 'upkeep', 'downUntil', 'otUntil'].forEach(k => { if (f[k] == null) f[k] = 0; }); });
-    co.routes.forEach(r => { ['sold', 'profit', 'freight', 'wait'].forEach(k => { if (r[k] == null) r[k] = 0; }); });
+    co.routes.forEach(r => { ['sold', 'profit', 'freight', 'wait'].forEach(k => { if (r[k] == null) r[k] = 0; }); if (r.mode == null) r.mode = 'sea'; });
     co.deals.concat(co.dealOffer ? [co.dealOffer] : []).forEach(d => { if (d.deposit == null) d.deposit = 0; });
     return co;
   }
@@ -1932,7 +1979,7 @@
     s.st.maxSale = Math.max(s.st.maxSale, pay);
     plSale(co, pl, pay, unitCost * q); co.rep.delivered += q;
     if (d.got >= d.qty) {
-      s.cash += d.bonus + d.deposit; co.dealsDone++; plSale(co, pl, d.bonus, 0);
+      s.cash += d.bonus + d.deposit; co.dealsDone++; plSale(co, pl, d.bonus, 0); gainXP(s, 70, 'a big order');
       if (!pl) co.dealShip++;
       co.deals.splice(co.deals.indexOf(d), 1);
       const msg = 'Big order complete: ' + fmtN(d.qty) + ' t ' + GOODS[d.g].name.toLowerCase() + ' delivered to ' + PORTS[d.port].name + '. Bonus ' + rm(d.bonus) + ' and your deposit back.';
@@ -1954,7 +2001,7 @@
   function breakdownAlert(s, p) {
     const co = s.co, f = co.fac[p], a = newAlert(s, 'breakdown');
     a.p = p; a.end = s.day + 4; f.downUntil = a.end;
-    a.cost = niceGoal(CO.facCost * 0.2 * f.lvl + netWorth(s) * 0.003);
+    a.cost = niceGoal((CO.facCost * 0.2 * f.lvl + netWorth(s) * 0.003) * fixMult(s));
     a.text = 'Your ' + RECIPES[f.recipe].name.toLowerCase() + ' in ' + PORTS[p].name + ' has broken down. Spare parts arrive on day ' + (a.end + 1) + '.';
     a.choices = [{ id: 'repair', label: 'Repair now · ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait for the parts', cost: 0 }];
     return a;
@@ -1975,7 +2022,7 @@
     if (kind === 'strike') {
       const p = whs[Math.floor(k2 * whs.length)];
       a = newAlert(s, kind); a.p = p; a.end = s.day + 2 + Math.floor(k3 * 3);
-      a.cost = Math.max(10000, niceGoal(12000 + stockValue(co.wh[p]) * 0.03 + netWorth(s) * 0.002));
+      a.cost = niceGoal(Math.max(10000, 12000 + stockValue(co.wh[p]) * 0.03 + netWorth(s) * 0.002) * fixMult(s));
       a.text = 'Dockers strike at ' + PORTS[p].name + '. Your warehouse there cannot load, unload, buy or sell until day ' + (a.end + 1) + '.';
       a.choices = [{ id: 'settle', label: 'Pay the dockers ' + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Wait it out', cost: 0 }];
     } else if (kind === 'breakdown') {
@@ -1994,7 +2041,7 @@
     } else if (kind === 'blight') {
       const p = ests[Math.floor(k2 * ests.length)], e = co.est[p];
       a = newAlert(s, kind); a.p = p; a.g = e.g; a.end = s.day + 5; e.blightUntil = a.end;
-      a.cost = niceGoal(30000 * e.lvl + netWorth(s) * 0.002);
+      a.cost = niceGoal((30000 * e.lvl + netWorth(s) * 0.002) * fixMult(s));
       a.text = (e.g === 'coal' ? 'Flooding in your coal mine' : 'Blight on your ' + ESTATES[e.g].name.toLowerCase()) + ' near ' + PORTS[p].name + ': half the usual harvest until day ' + (a.end + 1) + '.';
       a.choices = [{ id: 'spray', label: (e.g === 'coal' ? 'Pump it out · ' : 'Spray now · ') + rm(a.cost), cost: a.cost }, { id: 'wait', label: 'Let it pass', cost: 0 }];
     } else {
@@ -2052,7 +2099,7 @@
     return {
       stage: coStage(s), next: nextStage(s), daily: coDaily(s), value: coValue(s, false), reserve: co.reserve,
       warehouses: Object.keys(co.wh).map(p => ({ p, lvl: co.wh[p].lvl, used: whUsed(co.wh[p]), cap: whCap(co.wh[p]), stock: co.wh[p].stock, orders: co.wh[p].orders, fac: co.fac[p] || null })),
-      routes: co.routes.map(r => Object.assign({}, r, { quote: routeQuote(s, r.from, r.to, r.qty) })),
+      routes: co.routes.map(r => Object.assign({}, r, { quote: routeQuote(s, r.from, r.to, r.qty, r.mode) })),
     };
   }
   // Validate the company block of a save (called from upgradeRun).
@@ -2109,22 +2156,398 @@
     Object.keys(co.mgr).forEach(p => { const m = co.mgr[p]; saveRequire(own(co.wh, p) && saveHas(MGR_STYLES, m.style)); saveNumbers(m, ['since', 'bought', 'sold', 'wages', 'decided']); });
     co.routes.forEach(r => {
       saveRequire(own(co.wh, r.from) && s.ports.includes(r.to) && r.from !== r.to && ['wh', 'mkt'].includes(r.dest) && s.goods.includes(r.g) && typeof r.paused === 'boolean');
+      saveRequire(r.mode === 'sea' || (r.mode === 'truck' && truckOK(s, r.from, r.to)));
       saveNumbers(r, ['id', 'qty', 'trips', 'sold', 'profit', 'freight', 'wait']); saveRequire(intIn(r.qty, 10, 200));
       if (r.trip != null) { saveNumbers(r.trip, ['q', 'unit', 'depart', 'arrive']); saveRequire(numIn(r.trip.q, 1, 200) && numIn(r.trip.unit, 0, 1e7)); }
     });
     if (s.rngC !== undefined) saveRequire(Array.isArray(s.rngC) && s.rngC.length === 4 && s.rngC.every(Number.isInteger));
   }
 
+  /* ================= Captain XP, perks, quests, collections, haggling ================= */
+  // Every run has a captain level. XP comes from good trades, voyages, contracts, orders, bounties and quests.
+  // Each level offers a choice of three perks, drawn from the run's own game stream so the world stays the same.
+  const PERKS = {
+    haggler:     { name: 'Haggler', desc: 'Trading spread 15% narrower.' },
+    stowage:     { name: 'Stowage master', desc: 'Your hold carries 10% more.' },
+    purser:      { name: 'Purser', desc: 'Running costs 15% lower.' },
+    shipwright:  { name: 'Shipwright', desc: 'Repairs cost 30% less.' },
+    underwriter: { name: 'Underwriter', desc: 'Cargo insurance 30% cheaper.' },
+    lookout:     { name: 'Lookout', desc: 'Pirates find you 25% less often.' },
+    navigator:   { name: 'Navigator', desc: 'Storms 20% less likely on your route.' },
+    broker:      { name: 'Broker', desc: 'New contracts pay 8% more.' },
+    banker:      { name: 'Banker', desc: 'Bank interest 30% lower.' },
+    freighter:   { name: 'Freight boss', desc: 'Freight routes and trucks 15% cheaper.' },
+    fixer:       { name: 'Fixer', desc: 'Company troubles cost 30% less to fix.' },
+    surveyor:    { name: 'Surveyor', desc: 'Free quality surveys on every lot you buy.' },
+    silver:      { name: 'Silver tongue', desc: 'Haggling sweet spot 40% wider.' },
+  };
+  const PERK_IDS = Object.keys(PERKS);
+  const CAP_MAX = 30;
+  function xpNeed(lvl) { return Math.round(60 * Math.pow(lvl, 1.5)); }
+  function newCap() { return { xp: 0, lvl: 1, perks: [], picks: 0, offer: null, total: 0 }; }
+  function hasPerk(s, id) { return !!(s.cap && s.cap.perks.indexOf(id) >= 0); }
+  function gameRng(s) { if (!s.rngG) s.rngG = stream(s.seed + ':game'); return s.rngG; }
+  function perkOffer(s) {
+    const left = PERK_IDS.filter(p => s.cap.perks.indexOf(p) < 0);
+    const G = gameRng(s), out = [];
+    while (out.length < 3 && left.length) out.push(left.splice(Math.floor(rnd(G) * left.length), 1)[0]);
+    while (out.length < 3) out.push(out.length ? 'purse' + out.length : 'purse');
+    return out;
+  }
+  function gainXP(s, n, why) {
+    if (!s.cap || !(n > 0) || s.phase === 'ended') return 0;
+    n = Math.round(n);
+    const c = s.cap;
+    c.xp += n; c.total += n;
+    let ups = 0;
+    while (c.lvl < CAP_MAX && c.xp >= xpNeed(c.lvl)) { c.xp -= xpNeed(c.lvl); c.lvl++; c.picks++; ups++; }
+    if (c.lvl >= CAP_MAX) c.xp = Math.min(c.xp, xpNeed(CAP_MAX));
+    if (ups) {
+      if (!c.offer) c.offer = perkOffer(s);
+      log(s, 'Captain level ' + c.lvl + '! ' + (why ? 'Earned for ' + why + '. ' : '') + 'Choose a perk.', 'good');
+    }
+    return n;
+  }
+  function pickPerk(s, id) {
+    const c = s.cap;
+    if (!c || !c.offer || c.picks <= 0) return fail('No perk to choose');
+    if (c.offer.indexOf(id) < 0) return fail('Pick one of the offered perks');
+    if (own(PERKS, id)) c.perks.push(id);
+    else { const bonus = 10000 * c.lvl; s.cash += bonus; log(s, 'A purse from the guild: ' + rm(bonus) + '.', 'good'); }
+    c.picks--;
+    c.offer = c.picks > 0 ? perkOffer(s) : null;
+    afterChange(s);
+    return { ok: true };
+  }
+
+  // Quests: a ten-step story chain, then endless odd jobs from people around the ports.
+  const QUEST_CHAIN = [
+    { id: 'q1', giver: 'Harbourmaster Lee', title: 'First errand', type: 'profitsale', n: 1, cash: 5000, xp: 30, text: 'Show me you can turn a ringgit. Sell any cargo for a profit.' },
+    { id: 'q2', giver: 'Auntie Rosnah', title: 'Rice for the kampung', type: 'deliver', g: 'rice', q: 20, cash: 15000, xp: 50, text: 'The kampung is short of rice. Sell {q} t of rice in {P}.' },
+    { id: 'q3', giver: 'Old Teoh', title: 'Chart the waters', type: 'visit', n: 4, cash: 10000, xp: 40, text: 'A captain must know the ports. Drop anchor in {n} different ports.' },
+    { id: 'q4', giver: 'Mr Gopal', title: 'Trusted hands', type: 'contract', n: 1, cash: 25000, xp: 60, text: 'My clients want reliability. Deliver a contract on time.' },
+    { id: 'q5', giver: 'Madam Chua', title: 'A tidy profit', type: 'bigprofit', x: 60000, cash: 30000, xp: 70, text: 'Clear {x} profit on a single sale.' },
+    { id: 'q6', giver: 'Towkay Ng', title: 'Put down roots', type: 'warehouse', cash: 40000, xp: 80, text: 'Real merchants own a godown. Rent a warehouse in any port.' },
+    { id: 'q7', giver: 'Engineer Halim', title: 'Smoke and steel', type: 'factory', cash: 60000, xp: 90, text: 'Build a factory and make something of your own.' },
+    { id: 'q8', giver: 'Banker Wee', title: 'Two million reasons', type: 'worth', x: 2000000, cash: 80000, xp: 110, text: 'Reach a net worth of {x}.' },
+    { id: 'q9', giver: 'Kapitan Yusof', title: 'Rival’s pride', type: 'ahead', d: 30, cash: 100000, xp: 120, text: 'Be worth more than Towkay Lim on day {d} or later.' },
+    { id: 'q10', giver: 'The Guild', title: 'The Merchant’s Ledger', type: 'worth', x: 5000000, cash: 250000, xp: 200, card: 'ledger', text: 'Enter the Guild ledger: reach a net worth of {x}.' },
+  ];
+  const JOB_GIVERS = ['Cikgu Aminah', 'Mr Tan the chandler', 'Pak Long', 'Sister Grace', 'Captain Ramos', 'Uncle Bao', 'Mrs Fernandez', 'Haji Karim'];
+  function questFill(t, q) {
+    return t.replace('{P}', q.port ? PORTS[q.port].name : '').replace('{q}', q.q).replace('{n}', q.n).replace('{x}', rm(q.x || 0)).replace('{d}', q.d).replace('{G}', q.g ? GOODS[q.g].name.toLowerCase() : '');
+  }
+  function questBase(s) { return { pf: s.st.profitSales, con: s.st.contracts, sold: JSON.parse(JSON.stringify(s.st.sold)) }; }
+  function makeQuest(s) {
+    const Q = s.quest, G = gameRng(s);
+    let q;
+    if (Q.n < QUEST_CHAIN.length) {
+      const t = QUEST_CHAIN[Q.n];
+      q = { id: t.id, giver: t.giver, title: t.title, type: t.type, g: t.g || null, q: t.q || 0, n: t.n || 0, x: t.x || 0, d: t.d || 0, cash: t.cash, xp: t.xp, card: t.card || null, port: null };
+      if (q.type === 'deliver') {
+        const opts = s.ports.filter(p => p !== s.port && !PORTS[p].ocean && s.goods.indexOf(q.g) >= 0).sort((a, b) => PF[b][q.g] - PF[a][q.g]);
+        q.port = opts[0] || s.port;
+      }
+      if (q.type === 'bigprofit') q.x = niceGoal(Math.max(q.x, s.st.bestTrade * 1.1));
+      q.text = questFill(t.text, q);
+    } else {
+      // Odd jobs scale with the house: sell a good where it is wanted, or make a big sale.
+      const nw = Math.max(200000, netWorth(s));
+      const g = s.goods.filter(x => !GOODS[x].perish)[Math.floor(rnd(G) * s.goods.filter(x => !GOODS[x].perish).length)];
+      const ports = s.ports.filter(p => PF[p][g] >= 1.05);
+      const p = ports.length ? ports[Math.floor(rnd(G) * ports.length)] : s.ports[0];
+      const qty = clamp(Math.round(nw * 0.02 / GOODS[g].base / 5) * 5, 10, Math.max(10, shipCap(s)));
+      const giver = JOB_GIVERS[Math.floor(rnd(G) * JOB_GIVERS.length)];
+      q = { id: 'job' + (Q.n + 1), giver, title: 'Odd job', type: 'deliver', g, q: qty, n: 0, x: 0, d: 0, port: p, cash: niceGoal(Math.max(8000, nw * 0.01)), xp: 40 + Math.min(120, Q.done * 4), card: null };
+      q.text = 'Sell ' + qty + ' t of ' + GOODS[g].name.toLowerCase() + ' in ' + PORTS[p].name + '.';
+    }
+    q.base = questBase(s); q.since = s.day;
+    Q.cur = q;
+  }
+  function newQuest() { return { n: 0, done: 0, cur: null, last: null }; }
+  function questProgress(s, q) {
+    const B = q.base;
+    switch (q.type) {
+      case 'profitsale': return [s.st.profitSales - B.pf, q.n];
+      case 'deliver': return [Math.min(q.q, ((s.st.sold[q.port] || {})[q.g] || 0) - ((B.sold[q.port] || {})[q.g] || 0)), q.q];
+      case 'visit': return [Object.keys(s.st.visited).length, q.n];
+      case 'contract': return [s.st.contracts - B.con, q.n];
+      case 'bigprofit': return [s.st.bestTrade >= q.x ? 1 : 0, 1];
+      case 'warehouse': return [s.co && Object.keys(s.co.wh).length ? 1 : 0, 1];
+      case 'factory': return [s.co && Object.keys(s.co.fac).length ? 1 : 0, 1];
+      case 'worth': return [Math.min(q.x, Math.max(0, Math.round(netWorth(s)))), q.x];
+      case 'ahead': return [s.day >= q.d && s.rival && netWorth(s) > s.rival.nw ? 1 : 0, 1];
+    }
+    return [0, 1];
+  }
+  function questTick(s) {
+    const Q = s.quest; if (!Q || s.phase === 'ended') return;
+    if (!Q.cur) makeQuest(s);
+    const q = Q.cur, [v, goal] = questProgress(s, q);
+    if (v < goal) return;
+    s.cash += q.cash;
+    Q.done++; Q.n++; Q.last = { title: q.title, giver: q.giver, cash: q.cash, xp: q.xp, day: s.day, card: q.card };
+    if (q.card) cardGet(s, q.card);
+    log(s, 'Quest complete: ' + q.title + ' for ' + q.giver + '. +' + rm(q.cash) + ', +' + q.xp + ' XP.', 'good');
+    Q.cur = null;
+    gainXP(s, q.xp, 'a quest');
+    makeQuest(s);
+  }
+
+  // Collections: port stamps, cargo cards and rare cards are kept across every run; sets pay Legacy.
+  const RARE_CARDS = {
+    typhoon: 'Eye of the Typhoon', pirate: 'Clean Getaway', whale: 'Whale of a Sale', rumour: 'Ear to the Ground',
+    haggle: 'Perfect Haggle', survey: 'Sharp-eyed Surveyor', overland: 'Friendship Pass', ledger: 'The Merchant’s Ledger',
+  };
+  const COLL_SETS = [
+    { id: 'stamps_sea', name: 'Straits passport', lp: 20, items: () => PORT_IDS.filter(p => !PORTS[p].ocean).map(p => 'stamp:' + p) },
+    { id: 'stamps_ocean', name: 'Ocean passport', lp: 25, items: () => PORT_IDS.filter(p => PORTS[p].ocean).map(p => 'stamp:' + p) },
+    { id: 'cargo', name: 'Cargo cards', lp: 25, items: () => GOOD_IDS.map(g => 'card:' + g) },
+    { id: 'rare', name: 'Rare cards', lp: 40, items: () => Object.keys(RARE_CARDS).map(c => 'card:' + c) },
+    { id: 'fleet', name: 'Fleet trophies', lp: 20, items: () => SHIP_IDS.map(x => 'ship:' + x) },
+  ];
+  function cardGet(s, id) { if (!s.cards) s.cards = {}; if (!s.cards[id]) { s.cards[id] = s.day; return true; } return false; }
+  function newColl() { return { stamps: {}, cards: {}, ships: {}, sets: {} }; }
+  function collHas(m, key) { const [k, id] = key.split(':'); const C = m.coll; return !!(k === 'stamp' ? C.stamps[id] : k === 'card' ? C.cards[id] : C.ships[id]); }
+  // Copy what this run has earned into the persistent collection; returns new items and completed sets.
+  function collect(s, meta) {
+    const out = { items: [], sets: [] };
+    if (!s || !meta) return out;
+    if (!meta.coll) meta.coll = newColl();
+    const C = meta.coll, t = Date.now();
+    Object.keys(s.st.visited).forEach(p => { if (own(PORTS, p) && !C.stamps[p]) { C.stamps[p] = t; out.items.push({ kind: 'stamp', id: p, name: PORTS[p].name + ' stamp' }); } });
+    if (s.ship && own(SHIPS, s.ship.cls) && !C.ships[s.ship.cls]) { C.ships[s.ship.cls] = t; out.items.push({ kind: 'ship', id: s.ship.cls, name: SHIPS[s.ship.cls].name + ' trophy' }); }
+    Object.keys(s.cards || {}).forEach(id => {
+      if (C.cards[id] || !(own(GOODS, id) || own(RARE_CARDS, id))) return;
+      C.cards[id] = t; out.items.push({ kind: 'card', id, name: (own(GOODS, id) ? GOODS[id].name : RARE_CARDS[id]) + ' card' });
+    });
+    COLL_SETS.forEach(set => {
+      if (C.sets[set.id]) return;
+      if (set.items().every(k => collHas(meta, k))) { C.sets[set.id] = t; meta.lp += set.lp; meta.lpTotal += set.lp; out.sets.push({ id: set.id, name: set.name, lp: set.lp }); }
+    });
+    return out;
+  }
+  function collSummary(meta) {
+    const C = (meta && meta.coll) || newColl();
+    return COLL_SETS.map(set => { const items = set.items(); return { id: set.id, name: set.name, lp: set.lp, done: !!C.sets[set.id], have: items.filter(k => collHas({ coll: C }, k)).length, total: items.length, items }; });
+  }
+
+  // Haggling: a timing tap on a big lot. The score is how far from the sweet spot you stopped (0 is perfect).
+  const HAGGLE_MIN = 20000;
+  function haggleZone(s) { return hasPerk(s, 'silver') ? 0.17 : 0.12; }
+  function haggle(s, g, side, score) {
+    if (!canAct(s)) return fail('Not now');
+    if (s.goods.indexOf(g) < 0 || (side !== 'buy' && side !== 'sell')) return fail('Nothing to haggle over');
+    if (!Number.isFinite(score)) return fail('Bad haggle');
+    score = clamp(score, 0, 1);
+    const key = s.port + ':' + g + ':' + s.day;
+    if (s.hagUsed && s.hagUsed.indexOf(key) >= 0) return fail('This trader will not haggle again today');
+    const z = haggleZone(s);
+    const tier = score <= z ? 'perfect' : score <= z * 2.5 ? 'good' : 'bad';
+    const pct = tier === 'perfect' ? 0.05 : tier === 'good' ? 0.02 : -0.03;
+    s.hag = { p: s.port, g, side, day: s.day, mult: side === 'buy' ? 1 - pct : 1 + pct, tier };
+    s.hagUsed = (s.hagUsed || []).filter(k => k.split(':')[2] === String(s.day)).concat([key]);
+    if (tier === 'perfect') { cardGet(s, 'haggle'); gainXP(s, 15, 'a perfect haggle'); }
+    return { ok: true, tier, pct };
+  }
+  function hagMult(s, g, side) { const h = s.hag; return h && h.p === s.port && h.g === g && h.side === side && h.day === s.day ? h.mult : 1; }
+
+  function validateGame(s) {
+    const c = s.cap;
+    saveRequire(saveRecord(c)); saveNumbers(c, ['xp', 'lvl', 'picks', 'total']);
+    saveRequire(Number.isInteger(c.lvl) && c.lvl >= 1 && c.lvl <= CAP_MAX && c.xp >= 0 && c.xp <= 1e7 && Number.isInteger(c.picks) && c.picks >= 0 && c.picks <= CAP_MAX);
+    saveRequire(Array.isArray(c.perks) && c.perks.length <= PERK_IDS.length && c.perks.every(p => saveHas(PERKS, p)) && new Set(c.perks).size === c.perks.length);
+    saveRequire(c.offer === null || (Array.isArray(c.offer) && c.offer.length === 3 && c.offer.every(p => saveHas(PERKS, p) || /^purse\d?$/.test(p))));
+    saveRequire((c.offer === null) === (c.picks === 0));
+    const Q = s.quest;
+    saveRequire(saveRecord(Q)); saveNumbers(Q, ['n', 'done']);
+    saveRequire(Number.isInteger(Q.n) && Q.n >= 0 && Q.n <= 1e6);
+    if (Q.cur !== null) {
+      const q = Q.cur;
+      saveRequire(saveRecord(q) && typeof q.title === 'string' && typeof q.giver === 'string' && typeof q.text === 'string');
+      saveRequire(['profitsale', 'deliver', 'visit', 'contract', 'bigprofit', 'warehouse', 'factory', 'worth', 'ahead'].includes(q.type));
+      saveNumbers(q, ['q', 'n', 'x', 'd', 'cash', 'xp', 'since']);
+      saveRequire(q.cash >= 0 && q.cash <= 1e9 && q.xp >= 0 && q.xp <= 1e4);
+      saveRequire(q.g === null || s.goods.includes(q.g)); saveRequire(q.port === null || s.ports.includes(q.port));
+      saveRequire(q.card === null || saveHas(RARE_CARDS, q.card));
+      saveRequire(saveRecord(q.base) && saveRecord(q.base.sold)); saveNumbers(q.base, ['pf', 'con']);
+    }
+    saveRequire(Q.last === null || saveRecord(Q.last));
+    saveRequire(saveRecord(s.cards));
+    Object.keys(s.cards).forEach(k => saveRequire((saveHas(GOODS, k) || saveHas(RARE_CARDS, k)) && Number.isFinite(s.cards[k])));
+    saveRequire(s.hag === null || saveRecord(s.hag));
+    if (s.hag) { saveNumbers(s.hag, ['day', 'mult']); saveRequire(s.ports.includes(s.hag.p) && s.goods.includes(s.hag.g) && ['buy', 'sell'].includes(s.hag.side) && s.hag.mult >= 0.94 && s.hag.mult <= 1.06); }
+    saveRequire(Array.isArray(s.hagUsed) && s.hagUsed.length <= 50 && s.hagUsed.every(k => typeof k === 'string'));
+    if (s.rngG !== undefined) saveRequire(Array.isArray(s.rngG) && s.rngG.length === 4 && s.rngG.every(Number.isInteger));
+  }
+  function gameFill(s) {
+    if (s.cap == null) s.cap = newCap();
+    if (s.quest == null) { s.quest = newQuest(); if (s.phase !== 'ended') makeQuest(s); }
+    if (s.cards == null) s.cards = {};
+    if (s.hag === undefined) s.hag = null;
+    if (s.hagUsed == null) s.hagUsed = [];
+  }
+
+  /* ================= Selling up, quality surveys, overland trucks, charters, advice ================= */
+  // Sell every tonne aboard at this port, keeping what open contracts still need.
+  function sellAll(s) {
+    if (!canAct(s)) return fail('Not now');
+    const keep = {};
+    s.contracts.forEach(k => { keep[k.good] = (keep[k.good] || 0) + k.qty; });
+    let total = 0, profit = 0, n = 0;
+    for (const g of Object.keys(s.cargo)) {
+      const q = s.cargo[g].q - (keep[g] || 0);
+      if (q <= 0) continue;
+      const r = sell(s, g, q);
+      if (r.ok) { total += r.total; profit += r.profit; n++; }
+    }
+    if (!n) return fail(Object.keys(s.cargo).length ? 'Everything aboard is promised to a contract' : 'Your hold is empty');
+    return { ok: true, total, profit, n };
+  }
+  function sellAllQuote(s) {
+    const keep = {}; s.contracts.forEach(k => { keep[k.good] = (keep[k.good] || 0) + k.qty; });
+    let total = 0, basis = 0, n = 0;
+    Object.keys(s.cargo).forEach(g => { const q = s.cargo[g].q - (keep[g] || 0); if (q <= 0) return; const qt = quoteSell(s, g, q); total += qt.total; basis += s.cargo[g].cost * q; n++; });
+    return { total, profit: Math.round(total - basis), n };
+  }
+
+  // Quality: a big lot bought without a survey may be partly off-spec; off-spec tonnes sell for 20% less.
+  const SURVEY_MIN = 30000;
+  function surveyFee(s, total) { return hasPerk(s, 'surveyor') ? 0 : Math.max(500, Math.round(total * 0.006)); }
+  function offSpecChance(s) { return 0.1 + (s.level >= 3 ? 0.04 : 0); }
+
+  // The China–Vietnam overland corridor: trucks between Haiphong and Shenzhen through the Friendship Pass.
+  const TRUCK_LINKS = { 'haiphong|shenzhen': 2, 'shenzhen|haiphong': 2 };
+  function truckOK(s, from, to) { return own(TRUCK_LINKS, from + '|' + to) && s.ports.indexOf(from) >= 0 && s.ports.indexOf(to) >= 0; }
+  function freightMult(s) { return hasPerk(s, 'freighter') ? 0.85 : 1; }
+
+  // Endless charters: each year (six chapters) you choose three of six long goals.
+  const CHARTERS = {
+    ports:    { name: 'Serve the coast', text: p => 'Drop anchor in ' + p.n + ' different ports this year.', make: s => ({ n: Math.min(10, s.ports.length) }) },
+    made:     { name: 'Factory floor', text: p => 'Make ' + fmtN(p.x) + ' t of products this year.', make: s => ({ x: niceGoal(Math.max(800, (s.co ? s.co.made : 0) * 0.3 + 800)) }) },
+    debtfree: { name: 'Clean ledger', text: () => 'End every day of the year without bank or Ah Long debt.', make: () => ({}) },
+    worth:    { name: 'Grow the house', text: p => 'Reach a net worth of ' + rm(p.x) + ' this year.', make: s => ({ x: niceGoal(Math.max(5e6, netWorth(s) * 2.5)) }) },
+    orders:   { name: 'Order book', text: p => 'Complete ' + p.n + ' big orders this year.', make: () => ({ n: 4 }) },
+    lim:      { name: 'Lim’s nemesis', text: () => 'Close every chapter this year ahead of Towkay Lim.', make: () => ({}) },
+    sales:    { name: 'Busy hands', text: p => 'Make ' + p.n + ' profitable sales this year.', make: () => ({ n: 40 }) },
+    harvest:  { name: 'Bumper harvest', text: p => 'Harvest ' + fmtN(p.x) + ' t from your estates this year.', make: () => ({ x: 1500 }) },
+  };
+  const CHARTER_IDS = Object.keys(CHARTERS);
+  const YEAR_CHAPTERS = 6, CHARTER_LP = 12;
+  function charterBase(s) { return { made: s.co ? s.co.made : 0, deals: s.co ? s.co.dealsDone : 0, sales: s.st.profitSales, harvest: s.co ? s.co.harvested || 0 : 0 }; }
+  function newYear(s, no, startCh) {
+    const G = gameRng(s), pool = CHARTER_IDS.slice(), offer = [];
+    while (offer.length < 6) offer.push(pool.splice(Math.floor(rnd(G) * pool.length), 1)[0]);
+    return { no, startCh, offer, chosen: [] };
+  }
+  function pickCharters(s, ids) {
+    const E = s.endless; if (!E || !E.year) return fail('Charters are for Endless runs');
+    const Y = E.year;
+    if (Y.chosen.length) return fail('This year’s charters are already signed');
+    if (!Array.isArray(ids) || ids.length !== 3 || new Set(ids).size !== 3 || !ids.every(id => Y.offer.indexOf(id) >= 0)) return fail('Choose three charters');
+    Y.chosen = ids.map(id => ({ id, p: CHARTERS[id].make(s), base: charterBase(s), seen: {}, done: false, failed: false }));
+    Y.chosen.forEach(c => { c.text = CHARTERS[c.id].text(c.p); });
+    return { ok: true };
+  }
+  function charterProgress(s, c) {
+    const B = c.base, co = s.co;
+    switch (c.id) {
+      case 'ports': return [Object.keys(c.seen).length, c.p.n];
+      case 'made': return [(co ? co.made : 0) - B.made, c.p.x];
+      case 'worth': return [Math.max(0, Math.round(netWorth(s))), c.p.x];
+      case 'orders': return [(co ? co.dealsDone : 0) - B.deals, c.p.n];
+      case 'sales': return [s.st.profitSales - B.sales, c.p.n];
+      case 'harvest': return [(co ? co.harvested || 0 : 0) - B.harvest, c.p.x];
+      default: return [c.failed ? 0 : 1, 1];
+    }
+  }
+  function charterDaily(s) {
+    const Y = s.endless && s.endless.year; if (!Y) return;
+    Y.chosen.forEach(c => {
+      if (c.done || c.failed) return;
+      if (c.id === 'ports' && s.phase === 'port') c.seen[s.port] = 1;
+      if (c.id === 'debtfree' && (s.bank > 0 || s.along > 0)) c.failed = true;
+      if (c.id === 'debtfree' || c.id === 'lim') return;
+      const [v, goal] = charterProgress(s, c);
+      if (v >= goal) { c.done = true; log(s, 'Charter fulfilled: ' + CHARTERS[c.id].name + '.', 'good'); gainXP(s, 60, 'a charter'); }
+    });
+  }
+  // Called at each chapter close, after the report: settles the year when it ends.
+  function charterChapter(s, beat) {
+    const E = s.endless, Y = E.year; if (!Y) return 0;
+    if (!Y.chosen.length) pickCharters(s, Y.offer.slice(0, 3));
+    Y.chosen.forEach(c => { if (c.id === 'lim' && !beat) c.failed = true; });
+    const closed = E.ch - Y.startCh + 1;
+    if (closed < YEAR_CHAPTERS) return 0;
+    let lp = 0;
+    Y.chosen.forEach(c => {
+      if (c.id === 'debtfree' || c.id === 'lim') c.done = !c.failed;
+      if (c.done) { lp += CHARTER_LP; s.cash += niceGoal(Math.max(20000, netWorth(s) * 0.02)); }
+    });
+    E.lastYear = { no: Y.no, done: Y.chosen.filter(c => c.done).map(c => CHARTERS[c.id].name), lp };
+    E.year = newYear(s, Y.no + 1, E.ch + 1);
+    return lp;
+  }
+
+  // Advice: the best trades from here using only prices you have seen, after voyage costs.
+  function bestTrades(s, n) {
+    if (s.phase !== 'port') return [];
+    const room = freeSpace(s); if (room <= 0) return [];
+    const plans = {}, out = [];
+    s.ports.forEach(p => { if (p !== s.port && s.known[p]) plans[p] = planVoyage(s, p); });
+    s.goods.forEach(g => {
+      const q = Math.min(room, maxBuy(s, g)); if (q < 1) return;
+      const bq = quoteBuy(s, g, q);
+      let best = null;
+      Object.keys(plans).forEach(p => {
+        const pl = plans[p], km = s.known[p].mid[g];
+        if (pl.tooLate || !(km > 0)) return;
+        if (GOODS[g].perish && shelfLife(s, g) < pl.days) return;
+        const dI = ELASTIC * q / depthT(p, g), f = dI > 1e-9 ? (1 - Math.exp(-dI)) / dI : 1;
+        const sellTotal = q * km * (1 - spreadOf(s) / 2) * f;
+        const profit = Math.round(sellTotal - bq.total - pl.cost - portFee(s));
+        if (profit <= 0) return;
+        const t = { g, to: p, q, buy: bq.total, sell: Math.round(sellTotal), profit, days: pl.days, perDay: Math.round(profit / pl.days), age: s.day - s.known[p].day };
+        if (!best || t.perDay > best.perDay) best = t;
+      });
+      if (best) out.push(best);
+    });
+    out.sort((a, b) => b.perDay - a.perDay);
+    return out.slice(0, n || 3);
+  }
+  // Rough daily margin and payback time for a new building at this port, at today's prices.
+  function payback(s, kind, arg, p) {
+    p = p || s.port;
+    let perDay = 0, cost = 0;
+    if (kind === 'factory' && own(RECIPES, arg)) {
+      const R = RECIPES[arg], n = R.batches; cost = CO.facCost;
+      const out = n * R.out * sellPrice(s, p, arg);
+      const inp = Object.keys(R.input).reduce((t, g) => t + n * R.input[g] * buyPrice(s, p, g), 0);
+      perDay = out - inp - n * GOODS[arg].base * R.out * CO.batchFee - CO.facUpkeep;
+    } else if (kind === 'estate' && own(ESTATES, arg)) {
+      cost = CO.estCost;
+      const t = estateYield(s, { g: arg, lvl: 1, blightUntil: 0 });
+      perDay = t * (sellPrice(s, p, arg) - GOODS[arg].base * CO.harvestCost) - CO.estUpkeep;
+    } else if (kind === 'shop') {
+      cost = CO.shopCost;
+      // One product line, sold at standard prices: about a tenth of turnover is margin over making it yourself.
+      perDay = Math.max(0, ...Object.keys(SHOP_DEMAND).filter(g => s.goods.indexOf(g) >= 0).map(g => SHOP_DEMAND[g] * (PORT_SIZE[p] || 1) * GOODS[g].base * PF[p][g] * 0.1)) - CO.shopUpkeep;
+    } else return null;
+    perDay = Math.round(perDay);
+    return { cost, perDay, days: perDay > 0 ? Math.ceil(cost / perDay) : null };
+  }
+
   /* ================= Endless mode ================= */
   const CHAPTER_TWISTS = ['typhoon', 'boom', 'calm', 'credit', null, null];
   function newEndless(s) {
-    return { ch: 1, start: 1, baseLevel: s.level, nw0: 0, voy0: 0, lpOwed: 0, lpPaid: 0, ahead: 0, aheadBest: 0, neg: 0, bankrupt: false, seen: 0, reports: [] };
+    return { ch: 1, start: 1, baseLevel: s.level, nw0: 0, voy0: 0, lpOwed: 0, lpPaid: 0, ahead: 0, aheadBest: 0, neg: 0, bankrupt: false, seen: 0, reports: [], year: newYear(s, 1, 1), lastYear: null };
   }
   function endlessTick(s) {
     const E = s.endless;
     const nw = netWorth(s);
     E.neg = nw < 0 ? E.neg + 1 : 0;
     if (E.neg >= 10 && !E.bankrupt) { E.bankrupt = true; log(s, 'Ten days under water: your creditors close the house.', 'bad'); }
+    charterDaily(s);
     if (s.day >= s.maxDays) chapterClose(s);
   }
   function chapterClose(s) {
@@ -2141,6 +2564,9 @@
     E.reports.push({ ch: E.ch, from: E.start, to: s.day, nw0: Math.round(E.nw0), nw: Math.round(nw), rival: Math.round(s.rival.nw), beat, bounties: done.length, lp, voyages: voy, level: s.level, twist: s.twist });
     if (E.reports.length > 8) E.reports.shift();
     E.lpOwed += lp;
+    const yearLP = charterChapter(s, beat);
+    if (yearLP) { E.lpOwed += yearLP; log(s, 'Charter year ' + E.lastYear.no + ' settled: ' + (E.lastYear.done.length ? E.lastYear.done.join(', ') : 'no charters fulfilled') + '. +' + yearLP + ' Legacy.', 'good'); }
+    gainXP(s, 50, 'closing a chapter');
     // Next chapter
     E.ch++; E.start = s.day; E.nw0 = nw; E.voy0 = s.st.voyages;
     s.maxDays = s.day + CHAPTER_DAYS;
@@ -2310,6 +2736,12 @@
     { id: 'end_year', cat: 'Endless', name: 'A Year of Monsoons', desc: 'Reach day 360 in Endless.', lp: 20, test: s => s && s.mode === 'endless' && s.day >= 360, prog: s => [s && s.mode === 'endless' ? s.day : 0, 360] },
     { id: 'end_lim', cat: 'Endless', name: "Lim's Last Junk", desc: 'Close 5 Endless chapters in a row ahead of Towkay Lim.', lp: 25, test: s => s && s.endless && s.endless.aheadBest >= 5, prog: s => [s && s.endless ? s.endless.aheadBest : 0, 5] },
     { id: 'taipan', cat: 'Wealth', name: 'Taipan', desc: 'Reach RM 100M net worth.', lp: 30, test: s => s && s.st.peak >= 1e8 },
+    { id: 'cap5', cat: 'Mastery', name: 'Seasoned Skipper', desc: 'Reach captain level 5 in one run.', lp: 10, test: s => s && s.cap && s.cap.lvl >= 5, prog: s => [s && s.cap ? s.cap.lvl : 0, 5] },
+    { id: 'cap10', cat: 'Mastery', name: 'Old Salt', desc: 'Reach captain level 10 in one run.', lp: 20, test: s => s && s.cap && s.cap.lvl >= 10, prog: s => [s && s.cap ? s.cap.lvl : 0, 10] },
+    { id: 'guild', cat: 'Trade', name: 'Guild Ledger', desc: 'Finish the whole guild job chain in one run.', lp: 25, test: s => s && s.quest && s.quest.done >= QUEST_CHAIN.length, prog: s => [s && s.quest ? s.quest.done : 0, QUEST_CHAIN.length] },
+    { id: 'haggle_ace', cat: 'Trade', name: 'Silver Tongue', desc: 'Strike a perfect haggle.', lp: 5, test: s => !!(s && s.cards && s.cards.haggle) },
+    { id: 'collector', cat: 'Mastery', name: 'Collector', desc: 'Complete a set in the Cabinet.', lp: 10, test: (s, m) => m && m.coll && COLL_SETS.some(set => m.coll.sets && m.coll.sets[set.id]) },
+    { id: 'charters3', cat: 'Endless', name: 'Charter Year', desc: 'Fulfil all three charters in one Endless year.', lp: 25, test: s => s && s.endless && s.endless.lastYear && s.endless.lastYear.done.length >= 3 },
     { id: 'prince', cat: 'Wealth', name: 'Merchant Prince', desc: 'Reach RM 250M net worth.', lp: 40, test: s => s && s.st.peak >= 2.5e8 },
   ];
 
@@ -2419,6 +2851,20 @@
       saveRequire(E.lpOwed >= 0 && E.lpOwed <= 1000 && typeof E.bankrupt === 'boolean' && Array.isArray(E.reports) && E.reports.length <= 8);
       E.reports.forEach(r => { saveNumbers(r, ['ch', 'from', 'to', 'nw0', 'nw', 'rival', 'bounties', 'lp', 'voyages', 'level']); saveRequire(typeof r.beat === 'boolean' && (r.twist === null || saveHas(TWISTS, r.twist))); });
       saveRequire(saveRecord(s.rival) && Number.isFinite(s.rival.base) && Number.isFinite(s.rival.luck));
+      if (E.year === undefined) E.year = newYear(s, 1, E.ch);
+      if (E.lastYear === undefined) E.lastYear = null;
+      const Y = E.year;
+      saveRequire(saveRecord(Y)); saveNumbers(Y, ['no', 'startCh']);
+      saveRequire(Number.isInteger(Y.no) && Y.no >= 1 && Y.startCh >= 1 && Y.startCh <= E.ch && E.ch - Y.startCh < YEAR_CHAPTERS);
+      saveRequire(Array.isArray(Y.offer) && Y.offer.length === 6 && Y.offer.every(id => saveHas(CHARTERS, id)) && new Set(Y.offer).size === 6);
+      saveRequire(Array.isArray(Y.chosen) && (Y.chosen.length === 0 || Y.chosen.length === 3));
+      Y.chosen.forEach(c => {
+        saveRequire(saveRecord(c) && saveHas(CHARTERS, c.id) && Y.offer.includes(c.id) && saveRecord(c.p) && saveRecord(c.base) && saveRecord(c.seen) && typeof c.done === 'boolean' && typeof c.failed === 'boolean' && typeof c.text === 'string');
+        saveNumbers(c.base, ['made', 'deals', 'sales', 'harvest']);
+        Object.keys(c.p).forEach(k => saveRequire(Number.isFinite(c.p[k])));
+        Object.keys(c.seen).forEach(p => saveRequire(saveHas(PORTS, p)));
+      });
+      saveRequire(E.lastYear === null || (saveRecord(E.lastYear) && Array.isArray(E.lastYear.done)));
     } else saveRequire(VALID_DAYS.includes(s.maxDays) && s.day <= s.maxDays + 8 && s.endless === undefined);
     saveRequire(s.bank >= 0 && s.along >= 0 && Math.abs(s.cash) <= 1e13 && s.bank <= 1e13 && s.along <= 1e13);
     [s.rngW, s.rngL].forEach(r => saveRequire(Array.isArray(r) && r.length === 4 && r.every(Number.isInteger)));
@@ -2429,10 +2875,12 @@
     saveNumbers(s.ship, ['cond']);
     saveRequire(saveHas(SHIPS, s.ship.cls) && s.ship.cond >= 0 && s.ship.cond <= 100 && saveRecord(s.ship.up));
     saveRequire(saveRecord(s.perks) && saveRecord(s.cargo) && saveRecord(s.mk) && saveRecord(s.G) && saveRecord(s.known));
+    gameFill(s); validateGame(s);
     Object.keys(s.cargo).forEach(g => {
       const c = s.cargo[g];
       saveRequire(s.goods.includes(g)); saveNumbers(c, ['q', 'cost']);
       saveRequire(Number.isInteger(c.q) && c.q > 0 && c.cost >= 0);
+      if (c.bad !== undefined) saveRequire(Number.isInteger(c.bad) && c.bad >= 0 && c.bad <= c.q);
       if (GOODS[g].perish) saveRequire(Array.isArray(c.lots));
       if (c.lots !== undefined) {
         saveRequire(Array.isArray(c.lots));
@@ -2530,7 +2978,7 @@
   function deserializeMeta(str) {
     const m = parseSave(str), b = newMeta();
     saveRequire(saveRecord(m) && (m.v === undefined || m.v === 1) && saveRecord(m.stats));
-    ['settings', 'stats', 'daily', 'unlocks', 'ach', 'tips', 'endless'].forEach(k => {
+    ['settings', 'stats', 'daily', 'unlocks', 'ach', 'tips', 'endless', 'coll'].forEach(k => {
       saveRequire(m[k] === undefined || saveRecord(m[k]));
     });
     const out = Object.assign({}, b, m);
@@ -2539,6 +2987,15 @@
     saveRequire(Array.isArray(out.endless.hall) && out.endless.hall.length <= 5);
     out.endless.hall.forEach(h => { saveNumbers(h, ['t', 'nw', 'day', 'ch']); saveRequire(saveHas(CAPTAINS, h.captain)); });
     saveNumbers(out.daily, ['total']);
+    out.coll = Object.assign(newColl(), m.coll || {});
+    ['stamps', 'cards', 'ships', 'sets'].forEach(k => { saveRequire(saveRecord(out.coll[k])); Object.keys(out.coll[k]).forEach(id => saveRequire(Number.isFinite(out.coll[k][id]))); });
+    Object.keys(out.coll.stamps).forEach(p => saveRequire(saveHas(PORTS, p)));
+    Object.keys(out.coll.ships).forEach(x => saveRequire(saveHas(SHIPS, x)));
+    Object.keys(out.coll.cards).forEach(c => saveRequire(saveHas(GOODS, c) || saveHas(RARE_CARDS, c)));
+    Object.keys(out.coll.sets).forEach(x => saveRequire(COLL_SETS.some(set => set.id === x)));
+    saveRequire(out.seen === null || out.seen === undefined || (typeof out.seen === 'string' && out.seen.length <= 20));
+    if (out.seen === undefined) out.seen = null;
+    ['bigText', 'contrast', 'shapes'].forEach(k => saveRequire(out.settings[k] === undefined || typeof out.settings[k] === 'boolean'));
     saveNumbers(out, ['lp', 'lpTotal', 'levelMax']);
     saveRequire(out.lp >= 0 && out.lpTotal >= 0 && Number.isInteger(out.levelMax) && out.levelMax >= 0 && out.levelMax <= 10);
     Object.keys(b.settings).forEach(k => saveRequire(typeof out.settings[k] === 'boolean'));
@@ -2573,6 +3030,8 @@
     serialize, deserialize, deserializeMeta, canAct,
     SEASON_DAYS, CHAPTER_DAYS, collectEndlessLP, OCEAN_PORTS, STAGE, ESTATES, SHOP_DEMAND, SHOP_TIERS, SHOP_TERMS, MGR_STYLES, estateGoods, estateYield, buildEstate, upgradeEstate, openShop, upgradeShop, setShop, shopRecv, shopDemand, hireManager, setManager, fireManager, routeMax, mineQty,
     levelGoal, niceGoal, acceptDeal, declineDeal, coChoose, strikeAt, alertOpen, repActive, takeCoReport, STAGES, CO, RECIPES, ORDER_MODES, coStage, nextStage, whUsed, whCap, whFree, buildWarehouse, upgradeWarehouse, storeCargo, takeCargo, setOrder, removeOrder,
+    PERKS, PERK_IDS, xpNeed, pickPerk, hasPerk, gainXP, QUEST_CHAIN, questProgress, RARE_CARDS, COLL_SETS, collect, collSummary, haggle, haggleZone, HAGGLE_MIN,
+    sellAll, sellAllQuote, SURVEY_MIN, surveyFee, offSpecChance, TRUCK_LINKS, truckOK, CHARTERS, pickCharters, charterProgress, YEAR_CHAPTERS, bestTrades, payback,
     buildFactory, upgradeFactory, addRoute, removeRoute, pauseRoute, setReserve, routeQuote, freightDays, coValue, coDaily, coSummary, vsAvg, quoteBuyAt, quoteSellAt,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = MM;
