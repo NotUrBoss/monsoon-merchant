@@ -338,7 +338,7 @@ def v2_migration_journey(page, context, url, out):
         assert migrated[key]==original[key]
     assert page.evaluate("localStorage.getItem('mm.company.v2')")==old
     page.wait_for_function('navigator.serviceWorker.controller !== null')
-    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.3.1');return (await c.keys()).map(r=>r.url);}''')
+    cached=page.evaluate('''async()=>{const c=await caches.open('mm-2.4.0');return (await c.keys()).map(r=>r.url);}''')
     assert any(x.endswith('/company-actions.js') for x in cached)
     assert any(x.endswith('/company-play.js') for x in cached)
     assert all(any(x.endswith('/' + n) for x in cached) for n in ('art.js', 'pixel.js', 'sfx.js'))
@@ -493,7 +493,7 @@ def endless_and_layers_journey(page, context, url, out):
     act(page, 'continue', slot='endless')
     endless = lambda: page.evaluate("JSON.parse(localStorage.getItem('mm.run.endless.v1'))")
     act(page, 'tab', id='company')
-    assert page.locator('.stagecard .stg.on').count() == 8
+    assert page.locator('.stagecard .stg.on').count() == 9
     act(page, 'co-tab', id='sites')
     act(page, 'wh-build')
     act(page, 'est-sheet'); page.locator('.sheet [data-a="est-build"]').first.click()
@@ -552,7 +552,7 @@ def trade_layout_journey(page, context, url, out):
         before = page.evaluate(GEO)
         g = before['rows'][2]['g']
         for mode in ('buy', 'sell'):
-            page.locator(f'#screen [data-a="trade"][data-g="{g}"]').click()
+            page.locator(f'#screen .good[data-a="trade"][data-g="{g}"]').click()
             assert page.locator('#overlay .sheet.trade').count() == 1
             page.wait_for_timeout(300)
             before = page.evaluate(GEO)  # the click may scroll the row into view first
@@ -572,7 +572,7 @@ def trade_layout_journey(page, context, url, out):
             assert abs(row_a['top'] - row_b['top']) <= 2, (label, 'traded row moved', row_b, row_a)
             assert [(r['h'], r['w']) for r in after['rows']] == [(r['h'], r['w']) for r in before['rows']], (label, 'row sizes changed', before['rows'], after['rows'])
             assert after['toasts'] == 0, label + ': no toast covers the list'
-            assert page.locator(f'#screen [data-a="trade"][data-g="{g}"] .done-line').count() == 1, label + ': the row says what happened'
+            assert page.locator(f'#screen .good[data-a="trade"][data-g="{g}"] .done-line').count() == 1, label + ': the row says what happened'
             page.screenshot(path=str(out/f'{width}x{height}-{mode}.png'))
 
 AUDIT = '''() => {
@@ -628,6 +628,126 @@ def all_screens_journey(page, context, url, out):
         page.screenshot(path=str(out/f'end-{width}.png'))
         assert len(seen) >= 28, seen
 
+def gamify_journey(page, context, url, out):
+    # 2.4: captain level and perks, quests, haggling, survey, sell all and undo, the cabinet, accessibility,
+    # the wide layout with shortcuts, the price map, Endless charters and the overland truck.
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(url, wait_until='networkidle')
+    page.evaluate("() => { localStorage.removeItem('mm.run.normal.v1'); }")
+    page.reload(wait_until='networkidle')
+    act(page, 'new-season'); act(page, 'start-season')
+    assert page.locator('#screen .capchip').count() == 1, 'the HUD shows the captain level'
+    assert page.locator('#screen .questcard').count() == 1, 'the first guild job is on the market'
+    run = lambda: page.evaluate('() => JSON.parse(localStorage.getItem("mm.run.normal.v1"))')
+    # Haggle on a big lot: stop the marker and the quote changes.
+    page.evaluate("() => { window.__mm.run.cash += 400000; window.__mm.render(); }")
+    g = page.evaluate("() => window.__mm.run.goods.find(x => !MM.GOODS[x].perish)")
+    page.locator(f'#screen .good[data-a="trade"][data-g="{g}"]').click()
+    page.locator('.sheet [data-a="qty-set"]').last.click()
+    assert page.locator('.sheet [data-a="haggle-open"]').count() == 1, 'big lots can be haggled'
+    page.locator('.sheet [data-a="haggle-open"]').click()
+    assert page.locator('#hagMark').count() == 1
+    page.wait_for_timeout(250)
+    page.locator('.sheet [data-a="haggle-stop"]').click()
+    page.wait_for_timeout(100)
+    assert page.locator('.sheet [data-a="haggle-open"]').count() == 0, 'one haggle per trader per day'
+    assert page.locator('.sheet [data-a="survey"]').count() == 1, 'big lots offer a survey'
+    page.locator('.sheet [data-a="survey"]').click()
+    assert page.locator('.sheet [data-a="survey"]').get_attribute('aria-checked') == 'true'
+    page.locator('.sheet [data-a="do-trade"]').click()
+    page.wait_for_timeout(300)
+    assert page.locator('#screen .undobar').count() == 1, 'the trade can be undone'
+    cash_after = run()['cash']
+    page.locator('#screen .undobar[data-a="undo"]').click()
+    page.wait_for_timeout(200)
+    assert run()['cash'] > cash_after and not run()['cargo'].get(g), 'undo puts the cash back'
+    # Buy two cargoes, then sell everything with one confirm, then undo that too.
+    for gg in page.evaluate("() => window.__mm.run.goods.filter(x => !MM.GOODS[x].perish).slice(0, 2)"):
+        page.locator(f'#screen .good[data-a="trade"][data-g="{gg}"]').click()
+        page.locator('.sheet [data-a="qty-set"]').first.click()
+        page.locator('.sheet [data-a="do-trade"]').click(); page.wait_for_timeout(200)
+    assert page.locator('#screen .sellall [data-a="sell-all"]').count() == 1
+    page.locator('#screen [data-a="sell-all"]').click()
+    page.locator('.sheet [data-a="sell-all-go"]').click(); page.wait_for_timeout(300)
+    assert run()['cargo'] == {}, 'the hold is empty'
+    page.locator('#screen .undobar[data-a="undo"]').click(); page.wait_for_timeout(200)
+    assert len(run()['cargo']) == 2, 'undo restores the cargo'
+    # Level up: the perk sheet opens by itself and a perk can be chosen.
+    page.evaluate("() => { MM.gainXP(window.__mm.run, MM.xpNeed(1) + 5, 'test'); window.__mm.A.tab({id:'market'}); }")
+    page.wait_for_timeout(200)
+    if page.locator('.sheet.captain').count() == 0:
+        act(page, 'captain')
+    assert page.locator('.sheet.captain .perk-opt').count() == 3
+    page.locator('.sheet.captain .perk-opt').first.click(); page.wait_for_timeout(200)
+    assert run()['cap']['picks'] == 0
+    page.screenshot(path=str(out / 'phone-market.png'))
+    # The cabinet and back.
+    act(page, 'captain'); act(page, 'cabinet')
+    assert page.locator('.screen.cabinet .cabinet-grid').count() >= 4
+    page.screenshot(path=str(out / 'cabinet.png'))
+    act(page, 'cabinet-back')
+    assert page.locator('#screen .screen.run').count() == 1
+    # Price map chips put prices on the chart labels.
+    act(page, 'tab', id='map')
+    page.locator('#screen .price-chips [data-a="price-g"]').nth(1).click(); page.wait_for_timeout(300)
+    assert page.locator('#screen .lbl .pr').count() >= 1, 'prices on the chart'
+    # Accessibility: larger text, contrast and shapes apply at once.
+    page.evaluate("() => { window.__mm.A['go-title'](); window.__mm.A.settings(); }")
+    for k in ('bigText', 'contrast', 'shapes'):
+        act(page, 'toggle', id=k)
+    cls = page.evaluate('document.documentElement.className')
+    assert 'big-text' in cls and 'contrast' in cls and 'shapes' in cls, cls
+    assert page.evaluate('document.documentElement.scrollWidth') <= 391, 'no sideways scroll with larger text'
+    page.screenshot(path=str(out / 'a11y-settings.png'))
+    for k in ('bigText', 'contrast', 'shapes'):
+        act(page, 'toggle', id=k)
+    with page.expect_download() as dl:
+        act(page, 'export-file')
+    assert dl.value.suggested_filename.startswith('monsoon-merchant-backup-')
+    # Wide layout: side panel, sheets dock right, keyboard shortcuts.
+    page.set_viewport_size({'width': 1440, 'height': 900})
+    page.wait_for_timeout(300)
+    page.evaluate("() => window.__mm.A['go-title']()")
+    act(page, 'continue', slot='normal')
+    assert page.locator('#screen .run-body .side').count() == 1, 'wide screens get the side panel'
+    page.keyboard.press('2'); page.wait_for_timeout(150)
+    assert page.locator('#screen .tab.on[data-id="map"]').count() == 1, 'key 2 opens the map'
+    page.keyboard.press('1'); page.keyboard.press('c'); page.wait_for_timeout(150)
+    box = page.locator('#overlay .sheet').bounding_box()
+    assert box and box['x'] > 500, ('the sheet docks to the right', box)
+    page.keyboard.press('Escape'); page.wait_for_timeout(150)
+    page.screenshot(path=str(out / 'wide.png'))
+    # Endless: charters and the overland truck.
+    page.evaluate("""() => {const s=MM.newRun({seed:'e2e-charters',mode:'endless'},MM.newMeta());s.cash+=3e6;s.st.peak=13e6;s.port='haiphong';
+      localStorage.setItem('mm.run.endless.v1',MM.serialize(s));}""")
+    page.reload(wait_until='networkidle')
+    act(page, 'continue', slot='endless')
+    assert page.locator('#screen .charter-note').count() == 1, 'the market reminds you to pick charters'
+    act(page, 'tab', id='office')
+    for i in range(3):
+        page.locator('#screen .charter-pick [data-a="charter-toggle"]').nth(i).click()
+    act(page, 'charter-sign'); page.wait_for_timeout(200)
+    st = page.evaluate("JSON.parse(localStorage.getItem('mm.run.endless.v1'))")
+    assert len(st['endless']['year']['chosen']) == 3
+    assert page.locator('#screen .charter-list li').count() == 3
+    act(page, 'tab', id='company'); act(page, 'co-tab', id='sites'); act(page, 'wh-build')
+    act(page, 'co-tab', id='freight'); act(page, 'route-new')
+    page.evaluate("() => { const sh = window.__mm.UI.sheet; sh.from = 'haiphong'; sh.to = 'shenzhen'; window.__mm.A['rt-mode']({v:'truck'}); }")
+    page.wait_for_timeout(150)
+    assert page.locator('.sheet [data-a="rt-mode"][data-v="truck"].on').count() == 1, 'truck mode on the corridor'
+    act(page, 'rt-save'); page.wait_for_timeout(200)
+    st = page.evaluate("JSON.parse(localStorage.getItem('mm.run.endless.v1'))")
+    assert st['co']['routes'] and st['co']['routes'][0]['mode'] == 'truck', st['co']['routes']
+    # Small phones get short tips with a More link.
+    page.set_viewport_size({'width': 320, 'height': 568})
+    page.evaluate("() => { window.__mm.meta.settings.tips = true; window.__mm.meta.tips = {}; window.__mm.A['go-title'](); }")
+    act(page, 'new-season'); act(page, 'start-season')
+    if page.locator('#screen .tip').count():
+        assert page.locator('#screen .tip.short [data-a="tip-more"]').count() == 1
+        page.locator('#screen [data-a="tip-more"]').click()
+        assert page.locator('#screen .tip.short').count() == 0
+    page.screenshot(path=str(out / 'phone-320.png'))
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',default='/tmp/mm-browser-evidence')
@@ -644,7 +764,7 @@ def main():
             for engine in args.browsers:
                 browser=getattr(playwright,engine).launch(headless=True, **({'executable_path':os.environ['MM_CHROMIUM_PATH']} if engine=='chromium' and os.environ.get('MM_CHROMIUM_PATH') else {}))
                 try:
-                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey),('endless-and-layers',endless_and_layers_journey),('trade-layout-stability',trade_layout_journey),('all-screens',all_screens_journey)]:
+                    for name,fn in [('full-60-day-supply-chain',desktop_journey),('responsive-and-inputs',responsive_journey),('finance',finance_journey),('migration-and-classic',migration_journey),('storage-failure',storage_failure),('four-action-supply-chain',low_click_journey),('planner-accessibility',planner_interaction_journey),('v2-migration-offline',v2_migration_journey),('customer-decisions-effects',decision_and_effects_journey),('merged-supply-chain',merged_supply_chain_journey),('season-length-and-company-events',season_length_and_company_events_journey),('endless-and-layers',endless_and_layers_journey),('trade-layout-stability',trade_layout_journey),('all-screens',all_screens_journey),('gamify-2.4',gamify_journey)]:
                         if args.only and name not in args.only: continue
                         directory=output/engine/name;directory.mkdir(parents=True,exist_ok=True)
                         context=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
