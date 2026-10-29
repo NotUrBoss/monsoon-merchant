@@ -22,6 +22,7 @@ Sail across 9 South-East Asian ports. Buy cargo, read the monsoon, sail, sell, t
 | RM 3M | Shops | Open a shop beside a warehouse. It sells only goods you made, grew or shipped in, to its own customers. Choose value, standard or premium prices, and cash or 30-day credit (more buyers, some bad debts). Price-war alerts from Lim. |
 | RM 8M | Managers | Hire a cautious, balanced or aggressive branch manager. They keep a port's factory fed, sell surplus and answer its alerts while you sail. |
 | RM 10M | Ocean lanes | Colombo, Mumbai, Dubai and Tokyo join the chart: long, rich legs for the captain and for freight. Not in the Daily Voyage. |
+| RM 12M | Overland corridor | Truck freight between Haiphong and Shenzhen through the Friendship Pass: two days, no weather losses, but border queues can add a day or two. |
 
 **Source → store → manufacture → ship → sell or fulfil a contract**, all while you keep sailing. Every automatic action is one you approved, with a limit:
 
@@ -41,7 +42,17 @@ Longer seasons scale their goals: the rival, bounties and the net worth needed t
 
 Also in every season: monsoon winds, storms and pirates, three Legacy bounties, Daily Voyage, Monsoon levels, and Legacy unlocks between seasons. See `docs/merged-design.md` for the design.
 
-**Achievements**: 55, grouped in the Ledger by Trade, Voyages, Wealth, Company, Mastery, Endless and Daily, with progress bars for the counted ones. Ranks now go past Legend to Taipan (RM 100M) and Merchant Prince (RM 250M).
+**Achievements**: 61, grouped in the Ledger by Trade, Voyages, Wealth, Company, Mastery, Endless and Daily, with progress bars for the counted ones. Ranks now go past Legend to Taipan (RM 100M) and Merchant Prince (RM 250M).
+
+## Captain, quests and the Cabinet (2.4)
+
+- **Captain level**: profitable sales, voyages, new ports, contracts, big orders, bounties, quests and perfect haggles earn XP. Each level (up to 30) offers three of 13 **perks**, such as Stowage master (+10% hold), Haggler (narrower spreads), Navigator (fewer storms) or Freight boss (cheaper routes and trucks). The HUD shows your level; it pulses when a perk is waiting.
+- **Quests**: a ten-step story with the people of the ports (Harbourmaster Lee and friends), then endless odd jobs. Each pays cash and XP; the last story job earns a rare card.
+- **The Cabinet**: kept across every run. A stamp for every port you anchor in, a card for every cargo you sell at a profit, rare cards (storms, pirate escapes, perfect haggles, surveys, the overland pass…) and ship trophies. Completing a set pays Legacy.
+- **Haggling**: on lots of RM 20k or more, stop the marker in the gold zone: perfect is 5% better, close is 2%, a miss is 3% worse. One try per trader per day.
+- **Quality**: big lots (RM 30k+) can be partly off-spec and sell for 20% less. Tick **Survey** (0.6% fee) and the seller swaps them.
+- **Charters (Endless)**: every six chapters is a year. Sign three of six long goals; each one fulfilled pays 12 Legacy and a cash prize.
+- **Quality of life**: Sell everything here (keeps contract cargo), Undo the last trade, best known trades from here, a price map on the chart, payback estimates on buildings, a backup file, sharing your Daily result, shorter tips on small phones, a What's new card, a wide two-column layout on computers with keys (1–5 tabs, W wait, A sell all, U undo, C captain, Esc close), and Accessibility settings: larger text, high contrast and ▲▼ shapes beside gains and losses.
 
 ## Saves and the Archive
 
@@ -87,4 +98,4 @@ The browser suite uses actual UI controls against a Pages-style subpath, includi
 
 See `docs/interaction-review.md` and `docs/unified-review.md` for the architecture, level/environment design, workflow contracts and remaining release checks. Automated checks reduce risk; they do not prove that every possible action sequence or physical device is bug-free.
 
-Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.3.1; archived company save schema is v3.
+Work on a review branch and merge its PR only when ready to publish: `main` supplies the live GitHub Pages game. Keep `APP_VERSION`, the classic engine version and service-worker cache version aligned when releasing changed assets. Runtime version is 2.4.0; archived company save schema is v3.
